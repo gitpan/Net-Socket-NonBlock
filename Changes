@@ -1,5 +1,8 @@
 Revision history for Perl extension Net::Socket::NonBlock.
 
+0.11  Sun Jan 24 00:10:00 2003
+	- Serious bug with delayed close fixed
+
 0.10  Sun Jan 19 19:30:00 2003
 	- object-oriented interface to sockets added
 	- Net::Socket::NonBlock::Nest class introduced

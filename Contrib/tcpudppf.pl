@@ -25,13 +25,13 @@ my $TcpSrv = $SockNest->Listen(LocalAddr => $LocalAddr,
                                SitenceT  => 0,
                                ClientsST => 30,
                               )
-	or die "Could not listen TCP on \"$LocalAddr\", proto : $@\n";
+	or die "Could not listen TCP on \"$LocalAddr\": $@\n";
 	
 my $UdpSrv = $SockNest->Listen(LocalAddr => $LocalAddr,
                                Proto     => 'udp',
                                SilenceT  => 0,
                               )
-	or die "Could not listen UDP on \"$LocalAddr\", proto : $@\n";
+	or die "Could not listen UDP on \"$LocalAddr\": $@\n";
 
 my %TcpPool = ();
 my @UdpPool = ();

@@ -26,7 +26,7 @@ $EXPORT_TAGS{'all'}
 @EXPORT = qw(
 );
 
-$VERSION = '0.10';
+$VERSION = '0.11';
 
 use Carp;
 use IO::Select;
@@ -446,7 +446,7 @@ my $Cleanup = sub($$)
 			&{$Close}($SRec);
 			return;
 			}
-		elsif (&{$BuffEmpty}($Nest, $SRec, 'Output'))
+		elsif (&{$BuffEmpty}($SRec, 'Output'))
 			{
 			&{$ThrowMsg}($Nest, $Nest->{'debug'}, $SRec->{'Proto'}." socket $SRec closed after flush");
 			&{$Close}($SRec);
@@ -461,10 +461,10 @@ my $Cleanup = sub($$)
 		}
 	elsif ($SRec->{'SilenceT'} &&
 	       ($SRec->{'SilenceT'} < ($CurTime - $SRec->{'ATime'})) &&
-	       &{$BuffEmpty}($Nest, $SRec, 'Input') && 
-	       &{$BuffEmpty}($Nest, $SRec, 'Output'))
+	       &{$BuffEmpty}($SRec, 'Input') && 
+	       &{$BuffEmpty}($SRec, 'Output'))
 		{
-		&{$EOF}($Nest, $SRec, "silence timeout occurred");
+		&{$EOF}($SRec, "silence timeout occurred");
 		return;
 		};
 	return sprintf("$SRec: %d in, %d out", &{$BuffSize}($SRec, 'Input'), &{$BuffSize}($SRec, 'Output'));
@@ -726,7 +726,7 @@ sub IO($$)
 
 			if (!defined($Res))
 				{
-				&{$EOF}($Nest, $SRec, "send() fatal error");
+				&{$EOF}($SRec, "send() fatal error");
 				next;
 				};
 
@@ -734,7 +734,7 @@ sub IO($$)
 				{
 				if ($SRec->{'TCP'})
 					{
-					&{$EOF}($Nest, $SRec, "send() fatal error");
+					&{$EOF}($SRec, "send() fatal error");
 					next;
 					};
 				
@@ -922,7 +922,7 @@ __END__
 Net::Socket::NonBlock - Perl extension for easy creation multi-socket single-thread application,
 especially non-forking TCP servers
 
-I<Version 0.10>
+I<Version 0.11>
 
 =head1 SYNOPSIS
 
