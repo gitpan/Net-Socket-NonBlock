@@ -1,5 +1,8 @@
 Revision history for Perl extension Net::Socket::NonBlock.
 
+0.13  Sun Jan 24 23:05:00 2003
+	- I forget to change a version number in the module. Sorry.
+
 0.12  Sun Jan 24 23:00:00 2003
 	- Serious bug with "Undefined subroutine &Net::Socket::NonBlock::inet_aton" fixed
 

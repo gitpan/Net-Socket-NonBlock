@@ -1,4 +1,4 @@
-Net/Socket/NonBlock version 0.11
+Net/Socket/NonBlock version 0.13
 ================================
 
 This module could be used for easy creation multi-socket

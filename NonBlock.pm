@@ -26,7 +26,7 @@ $EXPORT_TAGS{'all'}
 @EXPORT = qw(
 );
 
-$VERSION = '0.11';
+$VERSION = '0.13';
 
 use Carp;
 use IO::Select;
@@ -922,7 +922,7 @@ __END__
 Net::Socket::NonBlock - Perl extension for easy creation multi-socket single-thread application,
 especially non-forking TCP servers
 
-I<Version 0.11>
+I<Version 0.13>
 
 =head1 SYNOPSIS
 
