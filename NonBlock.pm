@@ -30,7 +30,7 @@ $VERSION = '0.11';
 
 use Carp;
 use IO::Select;
-
+use IO::Socket;
 
 # Preloaded methods go here.
 
@@ -488,8 +488,8 @@ my $UpdatePeer = sub($$)
 	my $PeerName = $Sock->peername;
 	if (defined($PeerName))
 	        {
-		($SRec->{'PeerPort'}, $SRec->{'PeerAddr'}) = IO::Socket::unpack_sockaddr_in($PeerName);
-		$SRec->{'PeerAddr'} = IO::Socket::inet_ntoa($SRec->{'PeerAddr'});
+		($SRec->{'PeerPort'}, $SRec->{'PeerAddr'}) = unpack_sockaddr_in($PeerName);
+		$SRec->{'PeerAddr'} = inet_ntoa($SRec->{'PeerAddr'});
 	        }
 	else
 		{
@@ -537,8 +537,8 @@ my $NewSRec = sub($$$%)
 	my $SockName = $Socket->sockname;
 	if (defined($SockName))
 		{
-		($SRec->{'LocalPort'}, $SRec->{'LocalAddr'}) = IO::Socket::unpack_sockaddr_in($SockName);
-		$SRec->{'LocalAddr'} = IO::Socket::inet_ntoa($SRec->{'LocalAddr'});
+		($SRec->{'LocalPort'}, $SRec->{'LocalAddr'}) = unpack_sockaddr_in($SockName);
+		$SRec->{'LocalAddr'} = inet_ntoa($SRec->{'LocalAddr'});
 		};
 
 	if ($SRec->{'TCP'})
