@@ -21,6 +21,7 @@ ok(1); # If we made it this far, we're ok.
 # its man page ( perldoc Test ) for help writing this test script.
 
 my $SockNest = Net::Socket::NonBlock->new(SilenceT => 10,
+                                          #debug    => $^W,
                                           debug    => 0,
                                          )
 	or die "Can not create socket nest: $@";
@@ -28,6 +29,8 @@ my $SockNest = Net::Socket::NonBlock->new(SilenceT => 10,
 
 # Autoflush on
 $| = 1;
+
+my $IOerr = [];
 
 my $Incoming = undef;
 
@@ -53,7 +56,8 @@ my $Client = $SockNest->Connect(PeerAddr => $LocalAddr,
 print "client connection created..............";
 ok(3);
 
-$SockNest->IO();
+my $Res = $SockNest->IO($IOerr);
+#foreach (@{$IOerr}) { warn $_; };
 
 $Incoming or die "Client connection was not picked up by server\n";
 
@@ -72,7 +76,8 @@ $SockNest->Puts($Incoming, $ServerStr);
 my $tmpStr = '';
 while (!length($tmpStr))
 	{
-	$SockNest->IO();
+	$Res = $SockNest->IO($IOerr);
+	#foreach (@{$IOerr}) { warn $_; };
 	$tmpStr = $SockNest->Gets($Client);
 	if (!defined($tmpStr))
 		{ die "Unexpected socket error: $@"; };
@@ -90,7 +95,8 @@ $SockNest->Puts($Client, $ClientStr);
 $tmpStr = '';
 while (!length($tmpStr))
 	{
-	$SockNest->IO();
+	$Res = $SockNest->IO($IOerr);
+	#foreach (@{$IOerr}) { warn $_; };
 	$tmpStr = $SockNest->Gets($Incoming);
 	if (!defined($tmpStr))
 		{ die "Unexpected socket error: $@"; };
@@ -106,7 +112,8 @@ $SockNest->Close($Client);
 $SockNest->Close($Incoming);
 $SockNest->Close($Server);
 
-$SockNest->IO();
+$Res = $SockNest->IO($IOerr);
+#foreach (@{$IOerr}) { warn $_; };
 
 $SockCount = ($SockNest->NestProperties())->{'Sockets'};
 ($SockCount == 0)

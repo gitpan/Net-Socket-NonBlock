@@ -1,4 +1,4 @@
-Net/Socket/NonBlock version 0.13
+Net/Socket/NonBlock version 0.14
 ================================
 
 This module could be used for easy creation multi-socket
@@ -26,7 +26,8 @@ This module requires these other modules:
 
 COPYRIGHT AND LICENCE
 
-No copyright, no licence. Be patient...
+Copyright: Daniel Podolsky <tpaba@cpan.org>, 2003
+Licence:   Same as perl itself
 
 06 Jul 2002, Daniel Podolsky <tpaba@cpan.org>
 
