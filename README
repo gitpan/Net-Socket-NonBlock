@@ -1,4 +1,4 @@
-Net/Socket/NonBlock version 0.02
+Net/Socket/NonBlock version 0.04
 ================================
 
 This module could be used for easy creation multi-socket
@@ -28,5 +28,5 @@ COPYRIGHT AND LICENCE
 
 No copyright, no licence. Be patient...
 
-19 Jun 2001, Daniel Podolsky <tpaba@cpan.org>
+06 Jul 2002, Daniel Podolsky <tpaba@cpan.org>
 

@@ -1,5 +1,11 @@
 Revision history for Perl extension Net::Socket::NonBlock.
 
+0.04  Sat Jul  6 23:00:00 2002
+ 	- Serious bugfixes
+ 	- InstantDeth parameter removed
+ 	- debug parameter added
+ 	- The example updated
+
 0.03  Wed Jun 24 23:40:00 2002
 	- SafeStr not exported by default any more
 	- Parameter MaxClients added.

@@ -22,34 +22,22 @@ my $SockNest = Net::Socket::NonBlock->new(SilenceT => 10,)
 # Autoflush on
 $| = 1;
 
-#my $TestPort = 34343;
-#
-#print "Please enter the local port (>1024) which can be used for testing ($TestPort):";
-#
-#while(<STDIN>)
-#	{
-#	if ($_ =~ m/\A\r?\n\Z/)
-#		{ last; };
-#	if (($_ > 1024) && ($_ < 65536))
-#		{ $TestPort = $_; last; };
-#	print "Please enter the local port (>1024) which can be used for testing ($TestPort):";
-#	};
-
 my $Incoming = undef;
 
-my $Server = $SockNest->Listen(LocalAddr => 'localhost',
+my $LocalAddr = 'localhost';
+
+my $Server = $SockNest->Listen(LocalAddr => $LocalAddr,
                                Proto     => 'tcp',
                                Accept    => sub { $Incoming = $_[0]; return 1; },
                                Listen    => 10,)
 	or die "Could not create server: $@\n";
 
-my $Addr = 'localhost';
-my $Port = $SockNest->LocalPort($Server);
-
 print "server created.........................";
 ok(2);
 
-my $Client = $SockNest->Connect(PeerAddr => $Addr, PeerPort => $Port, Proto => 'tcp',)
+my $Client = $SockNest->Connect(PeerAddr => $LocalAddr,
+                                PeerPort => $SockNest->LocalPort($Server),
+                                Proto    => 'tcp',)
 	or die "Can not create client connection to \"$Addr:$Port\": $@\n";
 
 print "client connection created..............";
