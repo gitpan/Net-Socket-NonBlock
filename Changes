@@ -1,5 +1,24 @@
 Revision history for Perl extension Net::Socket::NonBlock.
 
+0.10  Sun Jan 19 19:30:00 2003
+	- object-oriented interface to sockets added
+	- Net::Socket::NonBlock::Nest class introduced
+	  It is placed in the same file as Net::Socket::NonBlock class
+	- functions Listen and Connect are moved to the Net::Socket::NonBlock::Nest
+	  package
+	- function Net::Socket::NonBlock->new() is returning
+	  the Net::Socket::NonBlock::Nest object.
+	  Note: Net::Socket::NonBlock->new() is provided for compatibility only.
+	  Use Net::Socket::NonBlock::Nest->new() instead.
+        - functions Net::Socket::NonBlock::Nest::Listen and
+          Net::Socket::NonBlock::Nest::Connect are returning 
+          the Net::Socket::NonBlock object
+        - function Net::Socket::NonBlock::Nest::Properties exists in parralell
+          to Net::Socket::NonBlock::Properties
+        - documentation changed according to module changes
+        - I hope the v.0.10 is fully compatible with v/ 0.06. It means you can continue to
+          use the functions in old style.
+
 0.06  Tue Sep 24 19:00:00 2002
  	- Close($SocketID [, $Flush [, $Timeout]]) syntax introduced
  	- IO([$Errors]) syntax introduced

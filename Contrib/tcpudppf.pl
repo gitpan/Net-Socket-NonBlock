@@ -3,7 +3,7 @@
 
 use strict;
 
-use Net::Socket::NonBlock qw(SafeStr);
+use Net::Socket::NonBlock;
 
 my $LocalAddr   = shift
 	or die "Usage: $0 <LocalAddr:LocalPort> <RemoteHost:RemotePort>\n";
@@ -167,8 +167,8 @@ while($SockNest->IO())
 			};
 		};
 	
-	#if (length($Pstr))
-	#	{ print localtime()."\n".$Pstr; };
+	if (length($Pstr))
+		{ print localtime()."\n".$Pstr; };
 	};           	
 
 sub NewTcpCon
@@ -188,3 +188,12 @@ sub NewTcpCon
 
 	return $TcpPool{$ClnSockID};
 	};
+
+sub SafeStr
+	{
+	my $Str = shift
+		or return '!UNDEF!';
+	$Str =~ s{ ([\x00-\x1f\xff\\]) } { sprintf("\\x%2.2X", ord($1)) }gsex;
+	return $Str;
+	};
+

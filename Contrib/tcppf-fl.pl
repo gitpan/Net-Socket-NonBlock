@@ -4,9 +4,7 @@
 use strict;
 
 use Carp qw(carp croak cluck confess);
-use Net::Socket::NonBlock qw(SafeStr);
-use Win32::Console;
-use Term::Getch;
+use Net::Socket::NonBlock;
 use IO::File;
 
 my $LocalPort   = shift
@@ -54,14 +52,14 @@ while($SockNest->IO())
 		my $ClientID = sprintf("%15.15s:%-5.5s", $SockNest->PeerAddr($ClnSock), $SockNest->PeerPort($ClnSock));
 		while(($Str = $SockNest->Read($ClnSock)) && length($Str))
 			{
-			$Pstr .= "  $ClientID From CLIENT ".SafeStr($Str)."\n";
-			$Fstr .= " From CLIENT ".SafeStr($Str)."\n";
+			$Pstr .= "    $ClientID From CLIENT ".SafeStr($Str)."\n";
+			$Fstr .= "    From CLIENT ".SafeStr($Str)."\n";
 			$SockNest->Puts($Info->{'SrvSock'}, $Str);
 			};
 		if (!defined($Str))
 			{
-			$Pstr .= "  $ClientID CLIENT closed: $@\n"; 
-			$Fstr .= " CLIENT closed: $@\n";
+			$Pstr .= "    $ClientID CLIENT closed: $@\n"; 
+			$Fstr .= "    CLIENT closed: $@\n";
 			if ($Info->{'File'})
 				{
 				print {$Info->{'File'}} localtime()."\n".$Fstr;
@@ -75,15 +73,15 @@ while($SockNest->IO())
 			};
 		while(($Str = $SockNest->Read($Info->{'SrvSock'})) && length($Str))
 			{
-			$Pstr .= "  $ClientID From SERVER ".SafeStr($Str)."\n";
-			$Fstr .= " From SERVER ".SafeStr($Str)."\n";
+			$Pstr .= "    $ClientID From SERVER ".SafeStr($Str)."\n";
+			$Fstr .= "    From SERVER ".SafeStr($Str)."\n";
 			#push(@{$Buffers{$ClnSock}}, $Str);
 			$SockNest->Puts($ClnSock, $Str);
 			};
 		if (!defined($Str))
 			{
-			$Pstr .= "  $ClientID SERVER closed: $@\n";
-			$Fstr .= " SERVER closed: $@\n"; 
+			$Pstr .= "    $ClientID SERVER closed: $@\n";
+			$Fstr .= "    SERVER closed: $@\n"; 
 			if ($Info->{'File'})
 				{
 				print {$Info->{'File'}} localtime()."\n".$Fstr;
@@ -95,21 +93,6 @@ while($SockNest->IO())
 			#delete($Buffers{$ClnSock});
 			next;
 			};
-		#my $tmpChr = getch();
-		#while(defined($Buffers{$ClnSock}) && scalar(@{$Buffers{$ClnSock}}) && defined($tmpChr) && ($tmpChr eq ' '))
-		#	{
-		#	my $tmpStr = shift(@{$Buffers{$ClnSock}});
-		#	$Pstr .= "  $ClientID To   CLIENT ".SafeStr($tmpStr)."\n";
-		#	$SockNest->Puts($ClnSock, $tmpStr);
-		#	$tmpChr = getch();
-		#	};
-		#$Str = "NOOP\r\n";
-		#while (defined($tmpChr) && ("\L$tmpChr" eq 'n'))
-		#	{
-		#	$Pstr .= "  $ClientID To   SERVER ".SafeStr($Str)."\n";
-		#	$SockNest->Puts($SrvSock, $Str);
-		#	$tmpChr = getch();
-		#	};
 		if (length($Fstr) && $Info->{'File'})
 			{ print {$Info->{'File'}} localtime()."\n".$Fstr; };
 		};
@@ -144,4 +127,12 @@ sub NewConnection
 	if ($ConPool{$ClnSock}->{'File'}) { print {$ConPool{$ClnSock}->{'File'}} localtime()." SERVER $RemoteHost CONNECTED\n"; };
 
 	return 1;
+	};
+
+sub SafeStr
+	{
+	my $Str = shift
+		or return '!UNDEF!';
+	$Str =~ s{ ([\x00-\x1f\xff]) } { sprintf("\\x%2.2X", ord($1)) }gsex;
+	return $Str;
 	};

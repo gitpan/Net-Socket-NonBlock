@@ -2,58 +2,50 @@
 
 use strict;
 
-use UniLog       qw(:levels :options :facilities SafeStr nosyslog);
+use Getopt::Std;
+
+use UniLog qw(:levels :options :facilities nosyslog);
 use Net::Socket::NonBlock;
 
 # Autoflush on
 $| = 1;
 
-my $Usage = "Usage: $0 <LocalPort> <RemoteHost:RemotePort> [nodaemon] [log=<LogFile>]\n";
+my $Usage = "Usage: $0 -p <LocalPort> -h <RemoteHost:RemotePort> [-d] [-f] [-l <LogFile>]\n\t-d is enabling debug information printing\n\t-f is disabling self-daemonising";
 
-my %Config = ('Port'   => 1,
-              'Host'   => 0,
-              'Daemon' => ($^O !~ m/win32/i),
-              'Debug'  => 0,
-              'Log'    => undef,
-             );
+my %Config = ();
 
+getopts("p:h:dfl:", \%Config);
 
-my $Arg = undef;
-while($Arg = shift())
-	{
-	if    ($Arg =~ m/\Aport=(\d+)\Z/i) { $Config{'Port'}   = $1; }
-	elsif ($Arg =~ m/\Ahost=(.+)\Z/i)  { $Config{'Host'}   = $1; }
-	elsif ($Arg =~ m/\Anodaemon\Z/i)   { $Config{'Daemon'} = 0;  }
-	elsif ($Arg =~ m/\Adebug\Z/i)      { $Config{'Debug'}  = 1;  }
-	elsif ($Arg =~ m/\Alog=(.+)\Z/i)   { $Config{'Log'}    = $1; }
-	else  { die $Usage; };
-	};
+(defined($Config{'p'}) && defined($Config{'h'}))
+	or die "$Usage\n";
+
+$Config{'f'} = $Config{'f'} || ($^O =~ m/win32/i);
 
 # Configure logger
 my $Logger=UniLog->new(Ident    => $0,
                        Options  => LOG_PID|LOG_CONS|LOG_NDELAY,
                        Facility => LOG_DAEMON,
-                       Level    => $Config{'Debug'} ? LOG_DEBUG : LOG_INFO,
-                       LogFile  => $Config{'Log'},
-                       StdErr   => (!$Config{'Log'}),
+                       Level    => $Config{'d'} ? LOG_DEBUG : LOG_INFO,
+                       LogFile  => $Config{'l'},
+                       StdErr   => (!$Config{'l'}),
                       );
 
 my $SockNest = Net::Socket::NonBlock->new(SelectT  => 0.1, SilenceT => 0)
 	or Die(1, "Error creating sockets nest: $@");
 
-$SockNest->Listen(LocalPort => $Config{'Port'},
+$SockNest->Listen(LocalPort => $Config{'p'},
                   Proto     => 'tcp',
                   Accept    => \&NewConnection,
                   SilenceT  => 0,
                   Listen    => 10,)
-	or Die(2, "Could not listen on port \"$Config{'Port'}\": $@");
+	or Die(2, "Could not listen on port \"$Config{'p'}\": $@");
 
 my %ConPool = ();
 
 print "$0 started\n";
 
 # Daemonize process if needed
-if ($Config{'Daemon'})
+if (!$Config{'f'})
 	{
 	$SIG{PIPE} = "IGNORE";
 	my $Pid=fork
@@ -78,7 +70,7 @@ while($SockNest->IO())
 		my $ClientID = $SockNest->PeerAddr($ClnSock).':'.$SockNest->PeerPort($ClnSock);
 		while($Str = $SockNest->Read($ClnSock))
 			{
-			if ($DataStage && !$Config{'Debug'})
+			if ($DataStage && !$Config{'d'})
 				{ $Logger->Message(LOG_INFO, "$ClientID length %s", length($Str)); }
 			else
 				{ $Logger->Message(LOG_INFO, "$ClientID from %s", SafeStr($Str)); };
@@ -124,11 +116,11 @@ sub NewConnection
 
 	my $ClientID = $SockNest->PeerAddr($ClnSock).':'.$SockNest->PeerPort($ClnSock);
 	
-	$ConPool{$ClnSock} = $SockNest->Connect(PeerAddr => $Config{'Host'}, Proto => 'tcp',);
+	$ConPool{$ClnSock} = $SockNest->Connect(PeerAddr => $Config{'h'}, Proto => 'tcp',);
 	
 	if (!$ConPool{$ClnSock})
 		{
-	        $Logger->Message(LOG_INFO, "$ClientID can not connect to $Config{'Host'}");
+	        $Logger->Message(LOG_INFO, "$ClientID can not connect to $Config{'h'}");
 		delete($ConPool{$ClnSock});
 		return;
 		};
@@ -144,3 +136,10 @@ sub Die
 	exit $ExitCode;
 	};
 
+sub SafeStr
+	{
+	my $Str = shift
+		or return '!UNDEF!';
+	$Str =~ s{ ([\x00-\x1f\xff]) } { sprintf("\\x%2.2X", ord($1)) }gsex;
+	return $Str;
+	};

@@ -1,10 +1,10 @@
-Net/Socket/NonBlock version 0.06
+Net/Socket/NonBlock version 0.10
 ================================
 
 This module could be used for easy creation multi-socket
 single-thread applications, especially non-forking TCP servers.
 
-Module was tested on FreeBSD 4.2 and Win2000.
+Module was tested on FreeBSD 4.7 and Win2000.
 
 INSTALLATION
 

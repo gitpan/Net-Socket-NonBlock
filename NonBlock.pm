@@ -2,167 +2,67 @@ package Net::Socket::NonBlock;
 
 use strict;
 
+#$^W++;
+
 use vars qw($VERSION @ISA @EXPORT @EXPORT_OK %EXPORT_TAGS);
 
 require Exporter;
 
 @ISA = qw(Exporter);
 
-%EXPORT_TAGS = ('functions'  => [qw(SafeStr)],
-               );
+%EXPORT_TAGS = ();
 
 my $Key = undef;
 foreach $Key (keys(%EXPORT_TAGS))
         {
-
         if ($Key eq 'all')
                 { next; };
         push(@{$EXPORT_TAGS{'all'}}, @{$EXPORT_TAGS{$Key}});
         };
 
-
-@EXPORT_OK = ( @{ $EXPORT_TAGS{'all'} } );
+$EXPORT_TAGS{'all'}
+	and @EXPORT_OK = ( @{ $EXPORT_TAGS{'all'} } );
 
 @EXPORT = qw(
 );
 
-$VERSION = '0.06';
+$VERSION = '0.10';
 
-use IO::Socket;
-use IO::Select;
-use POSIX;
 use Carp;
+use IO::Select;
+
 
 # Preloaded methods go here.
 
-my $ThrowMsg = sub($$$$)
+my $ThrowMsg = sub($$$)
 	{
-	my ($self, $CarpCond, $Msg) = @_;
+	my ($Nest, $CarpCond, $Msg) = @_;
 
 	$CarpCond
 		and Carp::carp $Msg;
 
-	($self && $self->{'ErrArray'})
-		and push(@{$self->{'ErrArray'}}, $Msg);
+	($Nest && $Nest->{'ErrArray'})
+		and push(@{$Nest->{'ErrArray'}}, $Msg);
 
 	return 1;
 	};
 
-sub new($%)
-	{
-	my ($class, %Params) = @_;
-
-	my $self = {};
-
-	$self->{'Select'}     = IO::Select->new()
-		or return;
-	$self->{'Pool'}       = {};
-	$self->{'SelectT'}    = (defined($Params{'SelectT'})    ? $Params{'SelectT'}    : 0.05);
-	$self->{'SilenceT'}   = (defined($Params{'SilenceT'})   ? $Params{'SilenceT'}   : 0);
-        $self->{'BuffSize'}   = (defined($Params{'BuffSize'})   ? $Params{'BuffSize'}   : POSIX::BUFSIZ);
-        $self->{'MaxClients'} = (defined($Params{'MaxClients'}) ? $Params{'MaxClients'} : 9999999999);
-        $self->{'debug'}      = (defined($Params{'debug'})      ? $Params{'debug'}      : 0);
-	return bless $self => $class;
-	};
+sub newNest
+	{ shift; return Net::Socket::NonBlock::Nest->new(@_); };
+sub new
+	{ shift; return Net::Socket::NonBlock::Nest->new(@_); };
 
 my $Die = sub($)
-	{ confess $_[0]; };
+	{ Carp::confess $_[0]; };
 
-my $NonBlock = sub($)
+my $BuffSize = sub($$)
 	{
-	if ( $^O !~ m/win32/i)
-		{
-		my $Flags = fcntl($_[0], F_GETFL, 0)
-			or &{$Die}("Can not get flags for socket: $!");
-		fcntl($_[0], F_SETFL, $Flags | O_NONBLOCK)
-			or &{$Die}("Can not make socket non-blocking: $!");
-		};
-	return $_[0];
-	};
-
-my $UpdatePeer = sub($$)
-	{
-	my $PeerName = $_[1]->peername;
-	if (defined($PeerName))
-	        {
-		($_[0]->{'PeerPort'}, $_[0]->{'PeerAddr'}) = unpack_sockaddr_in($PeerName);
-		$_[0]->{'PeerAddr'} = inet_ntoa($_[0]->{'PeerAddr'});
-	        }
-	else
-		{
-	        $_[0]->{'PeerAddr'} = '';
-	        $_[0]->{'PeerPort'} = '';
-		};
-        return;
-	};
-
-my $SockName = sub($$)
-	{
-	my $newName = $_[0].$_[1];
-	$newName =~ s/(=HASH)|(IO::Socket::INET=GLOB)/:/gio;
-	return $newName;
-	};
-
-my $NewSRec = sub($$$%)
-	{
-	my ($self, $Socket, $CTime, $Params) = @_;
-
-	$Params->{'Proto'} =~ m/\A\s*(.*)\s*\Z/;
-	$Params->{'Proto'} = "\U$1";
-	my $SRec = {'Socket'     => $Socket,
-		    'SilenceT'   => (defined($Params->{'SilenceT'})   ? $Params->{'SilenceT'}   : $self->{'SilenceT'}),
-                    'BuffSize'   => (defined($Params->{'BuffSize'})   ? $Params->{'BuffSize'}   : $self->{'BuffSize'}),
-                    'MaxClients' => (defined($Params->{'MaxClients'}) ? $Params->{'MaxClients'} : $self->{'MaxClients'}),
-                    'ClientsST'  => (defined($Params->{'ClientsST'})  ? $Params->{'ClientsST'}  : $self->{'SilenceT'}),
-                    'Clients'    => 0,
-	            'Parent'     => '',
-	            'BytesIn'    => 0,
-	            'BytesOut'   => 0,
-	            'CTime'      => $CTime,
-	            'ATime'      => $CTime,
-	            'Proto'      => $Params->{'Proto'},
-	            'TCP'        => ($Params->{'Proto'} eq 'TCP'),
-	            'Accept'     => $Params->{'Accept'},
-	            'PeerAddr'   => '',
-	            'PeerPort'   => '',
-	            'LocalAddr'  => '',
-	            'LocalPort'  => '',
-	            'Input'      => [],
-	            'Output'     => [],
-	            'Close'      => 0,
-	            'Flush'      => 0,
-	            'CloseAt'    => 0,
-	            'Error'      => '',
-	           };
-
-	&{$UpdatePeer}($SRec, $Socket);
-
-	my $SockName = $Socket->sockname;
-	if (defined($SockName))
-		{
-		($SRec->{'LocalPort'}, $SRec->{'LocalAddr'}) = unpack_sockaddr_in($SockName);
-		$SRec->{'LocalAddr'} = inet_ntoa($SRec->{'LocalAddr'});
-		};
-
-	if ($SRec->{'TCP'})
-		{
-		$SRec->{'Output'}->[0]->{'Data'} = '';
-		$SRec->{'Input'}->[0]->{'Data'}  = '';
-		$SRec->{'Input'}->[0]->{'PeerAddr'} = $SRec->{'PeerAddr'};
-		$SRec->{'Input'}->[0]->{'PeerPort'} = $SRec->{'PeerPort'};
-		};
-
-	return wantarray ? %{$SRec} : $SRec;
-	};
-
-my $BuffSize = sub ($$$)
-	{
-	my ($self, $SName, $BuffName) = @_;
-	($self->{'Pool'}->{$SName} && $self->{'Pool'}->{$SName}->{$BuffName})
-		or &{$Die}("$SName: buffer '$BuffName' does not exists");
+	my ($SRec, $BuffName) = @_;
+	($SRec->{$BuffName})
+		or &{$Die}("$SRec: buffer '$BuffName' does not exists");
 
 	my $Result = 0;
-        foreach (@{$self->{'Pool'}->{$SName}->{$BuffName}})
+        foreach (@{$SRec->{$BuffName}})
 		{
 		$Result += length($_->{'Data'});
 		};
@@ -170,369 +70,73 @@ my $BuffSize = sub ($$$)
 	return $Result;
 	};
 
-my $BuffEmpty = sub ($$$)
+my $BuffEmpty = sub($$)
 	{
-	my ($self, $SName, $BuffName) = @_;
-	($self->{'Pool'}->{$SName} && $self->{'Pool'}->{$SName}->{$BuffName})
-		or &{$Die}("$SName: buffer '$BuffName' does not exists");
+	my ($SRec, $BuffName) = @_;
+	($SRec->{$BuffName})
+		or &{$Die}("$SRec: buffer '$BuffName' does not exists");
 
-	if ($self->{'Pool'}->{$SName}->{'TCP'})
-		{ return (!length($self->{'Pool'}->{$SName}->{$BuffName}->[0]->{'Data'})); };
+	if ($SRec->{'TCP'})
+		{ return (!length($SRec->{$BuffName}->[0]->{'Data'})); };
 
-	return (!scalar(@{$self->{'Pool'}->{$SName}->{$BuffName}}));
+	return (!scalar(@{$SRec->{$BuffName}}));
 	};
 
-my $SockAvail = sub($$)
+my $SockAvail = sub($)
 	{
-	my ($self, $SName) = @_;
+	my ($SRec) = @_;
 
-	if (!$self->{'Pool'}->{$SName})
+	if (!($SRec && $SRec->{'Nest'}->{'Pool'}->{$SRec}))
 		{
 		$@ = "not exists";
 		return;
 		};
 
-	if ($self->{'Pool'}->{$SName}->{'Close'} ||
-	    ($self->{'Pool'}->{$SName}->{'EOF'} &&
-	     &{$BuffEmpty}($self, $SName, 'Input')))
+	if ($SRec->{'Close'} ||
+	    ($SRec->{'EOF'} && &{$BuffEmpty}($SRec, 'Input')))
 		{
-		$@ = $self->{'Pool'}->{$SName}->{'Error'};
+		$@ = $SRec->{'Error'};
 		return;
 		};
 
 	return 1;
 	};
 
-my $Close = sub($$)
+my $Close = sub($)
 	{
-	my ($self, $SName) = @_;
+	my ($SRec) = @_;
 
-	$self->{'Pool'}->{$SName}
-		or &{$Die}("$SName: does not exists");
-	
-	$self->{'Select'}->remove($self->{'Pool'}->{$SName}->{'Socket'});
+	$SRec->{'Nest'}->{'Select'}->remove($SRec->{'Socket'});
+	$SRec->{'Socket'}->close();
 
-	if ($self->{'Pool'}->{$SName}->{'Parent'} &&
-	    $self->{'Pool'}->{$self->{'Pool'}->{$SName}->{'Parent'}})
-		{
-		$self->{'Pool'}->{$self->{'Pool'}->{$SName}->{'Parent'}}->{'Clients'}--;
-		};
+	$SRec->{'Parent'}
+		and $SRec->{'Parent'}->{'Clients'}--;
 	
-	$self->{'Pool'}->{$SName}->{'Socket'}->close();
-	delete($self->{'Pool'}->{$SName});
+	delete($SRec->{'Nest'}->{'S2Rec'}->{$SRec->{'Socket'}});
+	delete($SRec->{'Nest'}->{'Pool'}->{$SRec});
 	return 1;
 	};
 
-my $EOF = sub($$$)
+my $EOF = sub($$)
 	{
-	my ($self, $SName, $Error) = @_;
-	$self->{'Pool'}->{$SName}->{'EOF'}++;
+	my ($SRec, $Error) = @_;
+	$SRec->{'EOF'}++;
 	if (length($Error))
 		{
-		$self->{'Pool'}->{$SName}->{'Error'} = $Error;
+		$SRec->{'Error'} = $Error;
 		$@ = $Error;
-		&{$ThrowMsg}($self, ($^W || $self->{'debug'}), "$SName: $Error");
+		&{$ThrowMsg}($SRec->{'Nest'}, ($^W || $SRec->{'Nest'}->{'debug'}), "$SRec: $Error");
 		};
-	$self->{'Select'}->remove($self->{'Pool'}->{$SName}->{'Socket'});
+	$SRec->{'Nest'}->{'Select'}->remove($SRec->{'Socket'});
 	return;
-	};
-
-my $Cleanup = sub($$)
-	{
-	my ($self, $SName) = @_;
-
-	my $SRec = $self->{'Pool'}->{$SName};
-	my $CurTime = time();
-
-	if ($SRec->{'Close'})
-		{
-		if    (!$SRec->{'Flush'})
-			{
-			&{$ThrowMsg}($self, $self->{'debug'}, $SRec->{'Proto'}." socket $SName closed by request");
-			&{$Close}($self, $SName);
-			return;
-			}
-		elsif (&{$BuffEmpty}($self, $SName, 'Output'))
-			{
-			&{$ThrowMsg}($self, $self->{'debug'}, $SRec->{'Proto'}." socket $SName closed after flush");
-			&{$Close}($self, $SName);
-			return;
-			}
-		elsif ($SRec->{'CloseAt'} && ($SRec->{'CloseAt'} < $CurTime))
-			{
-			&{$ThrowMsg}($self, $self->{'debug'}, $SRec->{'Proto'}." socket $SName closed by flush timeout");
-			&{$Close}($self, $SName);
-			return;
-			};
-		}
-	elsif ($SRec->{'SilenceT'} &&
-	       ($SRec->{'SilenceT'} < ($CurTime - $SRec->{'ATime'})) &&
-	       &{$BuffEmpty}($self, $SName, 'Input') && 
-	       &{$BuffEmpty}($self, $SName, 'Output'))
-		{
-		&{$EOF}($self, $SName, "silence timeout occurred");
-		return;
-		};
-	return sprintf("$SName: %d in, %d out", &{$BuffSize}($self, $SName, 'Input'), &{$BuffSize}($self, $SName, 'Output'));
-	};
-
-my $AddSock = sub
-	{
-	my ($self, $newSock, $Params) = @_;
-
-	$newSock or return;
-
-	my $newName = &{$SockName}($self, $newSock);
-	
-	$self->{'Pool'}->{$newName}
-		and &{$Die}("Socket $newName already in use");
-
-	$self->{'Select'}->add(&{$NonBlock}($newSock))
-	        or $newSock->close()
-		and $@ = "Can not add socket to select: $@"
-		and return;
-	
-	$self->{'Pool'}->{$newName} = &{$NewSRec}($self, $newSock, time(), $Params);
-
-	return $newName;
-	};
-
-my $Accept = sub($$)
-	{
-	my ($self, $PName) = @_;
-
-	my $PRec = $self->{'Pool'}->{$PName}
-		or &{$Die}("Socket '$PName' is not exists");
-
-	if (!($PRec->{'Clients'} < $PRec->{'MaxClients'}))
-		{
-		$@ = "maximum number of clients exceeded";
-		return;
-		};
-
-	my $newName = &{$AddSock}($self, scalar($PRec->{'Socket'}->accept()), $PRec)
-		or return;
-
-	$PRec->{'Clients'}++;
-	$self->{'Pool'}->{$newName}->{'Accept'}   = undef;
-	$self->{'Pool'}->{$newName}->{'SilenceT'} = $PRec->{'ClientsST'};
-	$self->{'Pool'}->{$newName}->{'Parent'}   = $PName;
-
-	if(!&{$PRec->{'Accept'}}($newName))
-		{
-		$self->{'Pool'}->{$newName}->{'Close'}++;
-		$@ = "external accept function returned a FALSE value";
-		return;
-		};
-
-	return $newName;
-	};
-
-my $Recv = sub($$$)
-	{
-	my ($self, $SName, $ATime) = @_;
-
-	my $SRec = $self->{'Pool'}->{$SName};
-
-	my $Buf = '';
-	my $Res = $SRec->{'Socket'}->recv($Buf, $SRec->{'BuffSize'}, 0);
-	
-	if (!defined($Res))
-		{
-		&{$EOF}($self, $SName, 'recv() fatal error');
-		return;
-		}
-	
-	if ($SRec->{'TCP'} && !length($Buf))
-		{
-		&{$EOF}($self, $SName, 'EOF');
-		return;
-		};
-
-	$SRec->{'ATime'}    = time();
-	$SRec->{'BytesIn'} += length($Buf);
-
-	if ($SRec->{'TCP'})
-		{
-		$SRec->{'Input'}->[0]->{'Data'} .= $Buf;
-		}
-	else
-		{
-		my $tmpHash = {'Data' => $Buf};
-		&{$UpdatePeer}($tmpHash, $SRec->{'Socket'});
-		push(@{$SRec->{'Input'}}, $tmpHash);
-		};
-
-	return length($Buf);
-	};
-
-sub IO($$)
-	{
-	my ($self, $ErrArray) = @_;
-
-	$ErrArray and @{$ErrArray} = ();
-
-	$self->{'ErrArray'} = $ErrArray;
-
-	my $CurTime = time();
-
-	my $SName = undef;
-	my $SRec  = undef;
-
-	foreach $SName (keys(%{$self->{'Pool'}}))
-		{ &{$Cleanup}($self, $SName); };
-
-	my $Socket = undef;
-
-	my @SockArray = ();
-
-	my $Continue = 1;
-	while ($Continue)
-		{
-		$Continue = 0;
-
-		@SockArray = $self->{'Select'}->can_read($self->{'SelectT'});
-		foreach $Socket (@SockArray)
-			{
-			$SName = &{$SockName}($self, $Socket);
-			$SRec  = $self->{'Pool'}->{$SName};
-	
-			if ($SRec->{'EOF'} || $SRec->{'Close'} ||
-			    (&{$BuffSize}($self, $SName, 'Input') >= $SRec->{'BuffSize'}))
-				{ next; };
-		
-			if ($SRec->{'Accept'} && $SRec->{'TCP'})
-				{
-				&{$Accept}($self, $SName)
-					and &{$ThrowMsg}(undef, $self->{'debug'}, "$SName: incoming connection accepted")
-					or  &{$ThrowMsg}($self, ($^W || $self->{'debug'}), "$SName: Can not accept incoming connection: $@");
-				$SRec->{'ATime'} = $CurTime;
-				next;
-				};
-		
-		        #$Continue = 1;
-
-			my ($Res) = &{$Recv}($self, $SName, $CurTime)
-				or next;
-	
-			&{$ThrowMsg}(undef, $self->{'debug'}, "$SName: recv $Res bytes");
-			};
-		};
-
-	$Continue = 1;
-	while ($Continue)
-		{
-		$Continue = 0;
-		my $Socket = undef;
-
-		@SockArray = $self->{'Select'}->can_write($self->{'SelectT'});
-		foreach $Socket (@SockArray)
-			{
-			$SName = &{$SockName}($self, $Socket);
-			$SRec  = $self->{'Pool'}->{$SName};
-
-			my $OutRec  = $SRec->{'Output'}->[0];
-
-			(defined($OutRec) && !$SRec->{'EOF'})
-				or next;
-			
-			my $DataLen = length($OutRec->{'Data'});
-			
-			if (!$DataLen && $SRec->{'TCP'})
-				{ next; }
-
-			$Continue++;
-
-			my $Res = $Socket->send($OutRec->{'Data'}, 0, $OutRec->{'Dest'});
-
-			if (!defined($Res))
-				{
-				&{$EOF}($self, $SName, "send() fatal error");
-				next;
-				};
-
-			if (!(($Res == $DataLen) || ($! == POSIX::EWOULDBLOCK)))
-				{
-				if ($SRec->{'TCP'})
-					{
-					&{$EOF}($self, $SName, "send() fatal error");
-					next;
-					};
-				
-				my ($DP, $DA) = unpack_sockaddr_in($OutRec->{'Dest'});
-				$DA = inet_ntoa($DA);
-				$SRec->{'Error'} = "$SName: send() error: ".($DataLen - $Res)." bytes were not sent to $DA:$DP";
-				&{$ThrowMsg}($self, ($^W || $self->{'debug'}), $SRec->{'Error'});
-				
-				shift(@{$SRec->{'Output'}});
-				$SRec->{'BytesOut'} += $Res;
-				next;
-				};
-
-			$SRec->{'ATime'}    =  $CurTime;
-			$SRec->{'BytesOut'} += $Res;
-			
-			if ($SRec->{'TCP'})
-				{
-				substr($OutRec->{'Data'}, 0, $Res) = '';
-				}
-			else
-				{
-				shift(@{$SRec->{'Output'}});
-				&{$UpdatePeer}($SRec, $Socket);
-				};
-
-			&{$ThrowMsg}(undef, ($self->{'debug'}), "$SName: $Res bytes sent to ".$SRec->{'PeerAddr'}.':'.$SRec->{'PeerPort'});
-			};
-		};
-	return 1;
-	};
-
-sub SelectT
-	{
-	my ($self, $SelectT) = @_;
-	my $Return = $self->{'SelectT'};
-	$SelectT and $self->{'SelectT'} = $SelectT;
-	return $Return;
-	};
-
-sub Listen
-	{
-	my ($self, %Params) = @_;
-
-	if (($Params{'Proto'} =~ m/\A\s*tcp\s*\Z/io) &&
-	    (ref($Params{'Accept'}) ne 'CODE'))
-		{
-		$@ = "'Accept' have to be a 'CODE' reference";
-		return;
-		};
-	
-	my $newName = &{$AddSock}($self, IO::Socket::INET->new(%Params), \%Params)
-		or return;
-
-	return $newName;
-	};
-
-sub Connect
-	{
-	my ($self, %Params) = @_;
-	
-	my $newName = &{$AddSock}($self, IO::Socket::INET->new(%Params), \%Params)
-		or return;
-
-	$self->{'Pool'}->{$newName}->{'Accept'} = undef;
-
-	return $newName;
 	};
 
 sub Gets
 	{
-	my ($self, $SName, $MaxLen) = @_;
+	my ($SRec, $MaxLen) = @_;
 
-	&{$SockAvail}($self, $SName)
+	&{$SockAvail}($SRec)
 		or return;
-
-	my $SRec = $self->{'Pool'}->{$SName};
 
 	$MaxLen or $MaxLen = $SRec->{'BuffSize'};
 
@@ -565,12 +169,10 @@ sub Gets
 
 sub Read
 	{
-	my ($self, $SName, $MaxLen) = @_;
+	my ($SRec, $MaxLen) = @_;
 
-	&{$SockAvail}($self, $SName)
+	&{$SockAvail}($SRec)
 		or return;
-
-	my $SRec = $self->{'Pool'}->{$SName};
 
 	$MaxLen or $MaxLen = $SRec->{'BuffSize'};
 
@@ -603,12 +205,10 @@ sub Read
 
 sub Recv
 	{
-	my ($self, $SName, $MaxLen) = @_;
+	my ($SRec, $MaxLen) = @_;
 
-	&{$SockAvail}($self, $SName)
+	&{$SockAvail}($SRec)
 		or return;
-
-	my $SRec = $self->{'Pool'}->{$SName};
 
 	$MaxLen or $MaxLen = $SRec->{'BuffSize'};
 	
@@ -634,12 +234,10 @@ sub Recv
 
 sub Puts
 	{
-	my ($self, $SName, $Data, $PeerAddr, $PeerPort) = @_;
+	my ($SRec, $Data, $PeerAddr, $PeerPort) = @_;
 
-	&{$SockAvail}($self, $SName)
+	&{$SockAvail}($SRec)
 		or return;
-
-	my $SRec = $self->{'Pool'}->{$SName};
 
 	if ($SRec->{'TCP'})
 		{
@@ -658,7 +256,7 @@ sub Puts
 	        my $PeerIP = inet_aton($PeerAddr);
 		my $Dest = pack_sockaddr_in($PeerPort, $PeerIP);
 		(defined($PeerIP) && defined($Dest))
-			or  $@ = "$SName: invalid destination address '$PeerAddr:$PeerPort'"
+			or  $@ = "$SRec: invalid destination address '$PeerAddr:$PeerPort'"
 			and return;
 		push(@{$SRec->{'Output'}}, {'Data' => $Data, 'Dest' => $Dest});
 		};
@@ -670,75 +268,61 @@ sub Send
 
 sub PeerAddr
 	{
-	my ($self, $SName) = @_;
-	&{$SockAvail}($self, $SName)
+	my ($SRec) = @_;
+
+	&{$SockAvail}($SRec)
 		or return;
-	return $self->{'Pool'}->{$SName}->{'PeerAddr'};
+	return $SRec->{'PeerAddr'};
 	};
 
 sub PeerPort
 	{
-	my ($self, $SName) = @_;
-	&{$SockAvail}($self, $SName)
+	my ($SRec) = @_;
+
+	&{$SockAvail}($SRec)
 		or return;
-	return $self->{'Pool'}->{$SName}->{'PeerPort'};
+	
+	return $SRec->{'PeerPort'};
 	};
 
 sub LocalAddr
 	{
-	my ($self, $SName) = @_;
-	&{$SockAvail}($self, $SName)
+	my ($SRec) = @_;
+
+	&{$SockAvail}($SRec)
 		or return;
-	return $self->{'Pool'}->{$SName}->{'LocalAddr'};
+	
+	return $SRec->{'LocalAddr'};
 	};
 
 sub LocalPort
 	{
-	my ($self, $SName) = @_;
-	&{$SockAvail}($self, $SName)
+	my ($SRec) = @_;
+
+	&{$SockAvail}($SRec)
 		or return;
-	return $self->{'Pool'}->{$SName}->{'LocalPort'};
+	
+	return $SRec->{'LocalPort'};
 	};
 
 sub Handle
 	{
-	my ($self, $SName) = @_;
-	&{$SockAvail}($self, $SName)
+	my ($SRec) = @_;
+
+	&{$SockAvail}($SRec)
 		or return;
-	return $self->{'Pool'}->{$SName}->{'Socket'};
-	};
-
-sub NestProperties
-	{
-	my ($self, %Params) = @_;
-
-	my %Result = ();
-
-	my $Key = undef;
-	foreach $Key ('SelectT', 'SilenceT', 'BuffSize', 'debug')
-		{ $Result{$Key} = defined($self->{$Key}) ? $self->{$Key} : ''; };
-
-	$Result{'Sockets'} = $self->{'Select'}->count();
-
-	foreach $Key ('SelectT', 'SilenceT', 'BuffSize', 'debug')
-		{
-		defined($Params{$Key})
-			and $self->{$Key} = $Params{$Key};
-		};
-
-	return wantarray ? %Result : \%Result;
+	
+	return $SRec->{'Socket'};
 	};
 
 sub Properties
 	{
-	my ($self, $SName, %Params) = @_;
+	my ($SRec, %Params) = @_;
 
-	&{$SockAvail}($self, $SName)
+	&{$SockAvail}($SRec)
 		or return;
 
 	my %Result = ();
-
-	my $SRec = $self->{'Pool'}->{$SName};
 
 	$Result{'Handle'} = $SRec->{'Socket'};
 
@@ -751,7 +335,7 @@ sub Properties
                 { $Result{$Key} = defined($SRec->{$Key}) ? $SRec->{$Key} : ''; };
 
 	foreach $Key ('Input', 'Output')
-		{ $Result{$Key} = &{$BuffSize}($self, $SName, $Key); };
+		{ $Result{$Key} = &{$BuffSize}($SRec, $Key); };
 
 	foreach $Key ('SilenceT', 'BuffSize', 'MaxClients', 'ClientsST', 'ATime', 'Accept')
 		{
@@ -764,16 +348,569 @@ sub Properties
 
 sub Close
 	{
-	my ($self, $SName, $Flush, $Timeout) = @_;
+	my ($SRec, $Flush, $Timeout) = @_;
 
-	$self->{'Pool'}->{$SName}
+	$SRec->{'Nest'}->{'Pool'}->{$SRec}
 		or return;
 
-	$self->{'Pool'}->{$SName}->{'Close'}++;
-	$self->{'Pool'}->{$SName}->{'Flush'} = (1 && $Flush);
+	$SRec->{'Close'}++;
+	$SRec->{'Flush'} = (1 && $Flush);
 	($Flush && $Timeout)
-		and $self->{'Pool'}->{$SName}->{'CloseAt'} = time() + $Timeout;
+		and $SRec->{'CloseAt'} = time() + $Timeout;
 	return;
+	};
+
+sub close
+	{ Net::Socket::NonBlock::Close(@_); };
+#################################################################################
+#################################################################################
+#################################################################################
+#################################################################################
+
+package Net::Socket::NonBlock::Nest;
+
+use IO::Socket;
+use POSIX;
+
+sub new($%)
+	{
+	my ($class, %Params) = @_;
+
+	my $Nest = {};
+
+	$Nest->{'Select'}     = IO::Select->new()
+		or return;
+	$Nest->{'Pool'}       = {};
+	$Nest->{'SelectT'}    = (defined($Params{'SelectT'})    ? $Params{'SelectT'}    : 0.05);
+	$Nest->{'SilenceT'}   = (defined($Params{'SilenceT'})   ? $Params{'SilenceT'}   : 0);
+        $Nest->{'BuffSize'}   = (defined($Params{'BuffSize'})   ? $Params{'BuffSize'}   : POSIX::BUFSIZ);
+        $Nest->{'MaxClients'} = (defined($Params{'MaxClients'}) ? $Params{'MaxClients'} : 9999999999);
+        $Nest->{'debug'}      = (defined($Params{'debug'})      ? $Params{'debug'}      : 0);
+        $Nest->{'class'}      = $class;
+	return bless $Nest => $class;
+	};
+
+sub newNest
+	{ shift; return Net::Socket::NonBlock::Nest->new(@_); };
+
+sub Properties
+	{
+	if (!(scalar(@_) & 1) &&
+	    ($_[1] =~ m/\ANet\:\:Socket\:\:NonBlock\=HASH\(\w+\)\Z/ois))
+		{
+		my $Nest = shift;
+		my $SRec = shift;
+		$SRec = $Nest->{'Pool'}->{$SRec}
+			or  &{$ThrowMsg}($Nest, ($^W || $Nest->{'debug'}), "$SRec: bad socket name")
+			and return;
+		return wantarray ? %{scalar($SRec->Properties(@_))} :
+		                     scalar($SRec->Properties(@_));
+		};
+	
+	my ($Nest, %Params) = @_;
+
+	my %Result = ();
+
+	my $Key = undef;
+	foreach $Key ('SelectT', 'SilenceT', 'BuffSize', 'debug')
+		{ $Result{$Key} = defined($Nest->{$Key}) ? $Nest->{$Key} : ''; };
+
+	$Result{'Sockets'} = $Nest->{'Select'}->count();
+
+	foreach $Key ('SelectT', 'SilenceT', 'BuffSize', 'debug')
+		{
+		defined($Params{$Key})
+			and $Nest->{$Key} = $Params{$Key};
+		};
+
+	return wantarray ? %Result : \%Result;
+	};
+
+sub NestProperties
+	{ return wantarray ? %{scalar(Properties(@_))} : scalar(Properties(@_)); };
+
+my $Cleanup = sub($$)
+	{
+	my ($Nest, $SRec) = @_;
+
+	($SRec->{'Socket'} && $Nest->{'Pool'}->{$SRec})
+		or  &{$Die}("$SRec: bad socket");
+
+	my $CurTime = time();
+
+	if ($SRec->{'Close'})
+		{
+		if    (!$SRec->{'Flush'})
+			{
+			&{$ThrowMsg}($Nest, $Nest->{'debug'}, $SRec->{'Proto'}." socket $SRec closed by request");
+			&{$Close}($SRec);
+			return;
+			}
+		elsif (&{$BuffEmpty}($Nest, $SRec, 'Output'))
+			{
+			&{$ThrowMsg}($Nest, $Nest->{'debug'}, $SRec->{'Proto'}." socket $SRec closed after flush");
+			&{$Close}($SRec);
+			return;
+			}
+		elsif ($SRec->{'CloseAt'} && ($SRec->{'CloseAt'} < $CurTime))
+			{
+			&{$ThrowMsg}($Nest, $Nest->{'debug'}, $SRec->{'Proto'}." socket $SRec closed by flush timeout");
+			&{$Close}($SRec);
+			return;
+			};
+		}
+	elsif ($SRec->{'SilenceT'} &&
+	       ($SRec->{'SilenceT'} < ($CurTime - $SRec->{'ATime'})) &&
+	       &{$BuffEmpty}($Nest, $SRec, 'Input') && 
+	       &{$BuffEmpty}($Nest, $SRec, 'Output'))
+		{
+		&{$EOF}($Nest, $SRec, "silence timeout occurred");
+		return;
+		};
+	return sprintf("$SRec: %d in, %d out", &{$BuffSize}($SRec, 'Input'), &{$BuffSize}($SRec, 'Output'));
+	};
+
+my $NonBlock = sub($)
+	{
+	if ( $^O !~ m/win32/i)
+		{
+		my $Flags = fcntl($_[0], F_GETFL(), 0)
+			or &{$Die}("Can not get flags for socket: $!");
+		fcntl($_[0], F_SETFL(), $Flags | O_NONBLOCK())
+			or &{$Die}("Can not make socket non-blocking: $!");
+		};
+	return $_[0];
+	};
+
+my $UpdatePeer = sub($$)
+	{
+	my ($SRec, $Sock) = @_;
+	my $PeerName = $Sock->peername;
+	if (defined($PeerName))
+	        {
+		($SRec->{'PeerPort'}, $SRec->{'PeerAddr'}) = IO::Socket::unpack_sockaddr_in($PeerName);
+		$SRec->{'PeerAddr'} = IO::Socket::inet_ntoa($SRec->{'PeerAddr'});
+	        }
+	else
+		{
+	        $SRec->{'PeerAddr'} = '';
+	        $SRec->{'PeerPort'} = '';
+		};
+        return;
+	};
+
+my $NewSRec = sub($$$%)
+	{
+	my ($Nest, $Socket, $CTime, $Params) = @_;
+
+	$Params->{'Proto'} =~ m/\A\s*(.*)\s*\Z/;
+	$Params->{'Proto'} = "\U$1";
+	my $SRec = {'Nest'       => $Nest,
+	            'Socket'     => $Socket,
+		    'SilenceT'   => (defined($Params->{'SilenceT'})   ? $Params->{'SilenceT'}   : $Nest->{'SilenceT'}),
+                    'BuffSize'   => (defined($Params->{'BuffSize'})   ? $Params->{'BuffSize'}   : $Nest->{'BuffSize'}),
+                    'MaxClients' => (defined($Params->{'MaxClients'}) ? $Params->{'MaxClients'} : $Nest->{'MaxClients'}),
+                    'ClientsST'  => (defined($Params->{'ClientsST'})  ? $Params->{'ClientsST'}  : $Nest->{'SilenceT'}),
+                    'Clients'    => 0,
+	            'Parent'     => '',
+	            'BytesIn'    => 0,
+	            'BytesOut'   => 0,
+	            'CTime'      => $CTime,
+	            'ATime'      => $CTime,
+	            'Proto'      => $Params->{'Proto'},
+	            'TCP'        => ($Params->{'Proto'} eq 'TCP'),
+	            'Accept'     => $Params->{'Accept'},
+	            'PeerAddr'   => '',
+	            'PeerPort'   => '',
+	            'LocalAddr'  => '',
+	            'LocalPort'  => '',
+	            'Input'      => [],
+	            'Output'     => [],
+	            'Close'      => 0,
+	            'Flush'      => 0,
+	            'CloseAt'    => 0,
+	            'Error'      => '',
+	           };
+
+	&{$UpdatePeer}($SRec, $Socket);
+
+	my $SockName = $Socket->sockname;
+	if (defined($SockName))
+		{
+		($SRec->{'LocalPort'}, $SRec->{'LocalAddr'}) = IO::Socket::unpack_sockaddr_in($SockName);
+		$SRec->{'LocalAddr'} = IO::Socket::inet_ntoa($SRec->{'LocalAddr'});
+		};
+
+	if ($SRec->{'TCP'})
+		{
+		$SRec->{'Output'}->[0]->{'Data'} = '';
+		$SRec->{'Input'}->[0]->{'Data'}  = '';
+		$SRec->{'Input'}->[0]->{'PeerAddr'} = $SRec->{'PeerAddr'};
+		$SRec->{'Input'}->[0]->{'PeerPort'} = $SRec->{'PeerPort'};
+		};
+
+	#return wantarray ? %{$SRec} : $SRec;
+	return bless $SRec => 'Net::Socket::NonBlock';
+	};
+
+my $AddSock = sub
+	{
+	my ($Nest, $newSock, $Params) = @_;
+
+	$newSock or return;
+
+	my $newSRec = &{$NewSRec}($Nest, $newSock, time(), $Params);
+	
+	($Nest->{'Pool'}->{$newSRec} || $Nest->{'S2Rec'}->{$newSock})
+		and &{$Die}("Socket '$newSRec' already in use");
+
+	$Nest->{'Select'}->add(&{$NonBlock}($newSock))
+	        or $newSock->close()
+		and $@ = "Can not add socket to select: $@"
+		and return;
+	
+	$Nest->{'Pool'}->{$newSRec} = $newSRec;
+
+	$Nest->{'S2Rec'}->{$newSock}  = $newSRec;
+
+	return $newSRec;
+	};
+
+my $Accept = sub($)
+	{
+	my ($PRec) = @_;
+
+	($PRec->{'Socket'} && $PRec->{'Nest'}->{'Pool'}->{$PRec})
+		or  &{$Die}("$PRec: bad socket");
+
+	if (!($PRec->{'Clients'} < $PRec->{'MaxClients'}))
+		{
+		$@ = "maximum number of clients exceeded";
+		return;
+		};
+
+	my $newSRec = &{$AddSock}($PRec->{'Nest'}, scalar($PRec->{'Socket'}->accept()), $PRec)
+		or return;
+
+	$PRec->{'Clients'}++;
+	$PRec->{'Nest'}->{'Pool'}->{$newSRec} = $newSRec;
+	$PRec->{'Nest'}->{'S2Rec'}->{$newSRec->{'Socket'}} = $newSRec;
+	$newSRec->{'Accept'}   = undef;
+	$newSRec->{'SilenceT'} = $PRec->{'ClientsST'};
+	$newSRec->{'Parent'}   = $PRec;
+
+	if(!&{$PRec->{'Accept'}}($newSRec))
+		{
+		$newSRec->{'Close'}++;
+		$@ = "external accept function returned a FALSE value";
+		return;
+		};
+
+	return $newSRec;
+	};
+
+my $Recv = sub($$)
+	{
+	my ($SRec, $ATime) = @_;
+
+	($SRec->{'Socket'} && $SRec->{'Nest'}->{'Pool'}->{$SRec})
+		or  &{$Die}("$SRec: bad socket");
+
+	my $Buf = '';
+	my $Res = $SRec->{'Socket'}->recv($Buf, $SRec->{'BuffSize'}, 0);
+	
+	if (!defined($Res))
+		{
+		&{$EOF}($SRec, 'recv() fatal error');
+		return;
+		}
+	
+	if ($SRec->{'TCP'} && !length($Buf))
+		{
+		&{$EOF}($SRec, 'EOF');
+		return;
+		};
+
+	$SRec->{'ATime'}    = time();
+	$SRec->{'BytesIn'} += length($Buf);
+
+	if ($SRec->{'TCP'})
+		{
+		$SRec->{'Input'}->[0]->{'Data'} .= $Buf;
+		}
+	else
+		{
+		my $tmpHash = {'Data' => $Buf};
+		&{$UpdatePeer}($tmpHash, $SRec->{'Socket'});
+		push(@{$SRec->{'Input'}}, $tmpHash);
+		};
+
+	return length($Buf);
+	};
+
+sub IO($$)
+	{
+	my ($Nest, $ErrArray) = @_;
+
+	$ErrArray and @{$ErrArray} = ();
+
+	$Nest->{'ErrArray'} = $ErrArray;
+
+	my $CurTime = time();
+
+	my $SRec = undef;
+
+	foreach $SRec (values(%{$Nest->{'Pool'}}))
+		{ &{$Cleanup}($Nest, $SRec); };
+
+	my $Socket = undef;
+
+	my @SockArray = ();
+
+	my $Continue = 1;
+	while ($Continue)
+		{
+		$Continue = 0;
+
+		@SockArray = $Nest->{'Select'}->can_read($Nest->{'SelectT'});
+		foreach $Socket (@SockArray)
+			{
+			$SRec  = $Nest->{'S2Rec'}->{$Socket};
+	
+			if ($SRec->{'EOF'} || $SRec->{'Close'} ||
+			    (&{$BuffSize}($SRec, 'Input') >= $SRec->{'BuffSize'}))
+				{ next; };
+		
+			if ($SRec->{'Accept'} && $SRec->{'TCP'})
+				{
+				&{$Accept}($SRec)
+					and &{$ThrowMsg}(undef, $Nest->{'debug'}, "$SRec: incoming connection accepted")
+					or  &{$ThrowMsg}($Nest, ($^W || $Nest->{'debug'}), "$SRec: Can not accept incoming connection: $@");
+				$SRec->{'ATime'} = $CurTime;
+				next;
+				};
+		
+		        #$Continue = 1;
+
+			my ($Res) = &{$Recv}($SRec, $CurTime)
+				or next;
+	
+			&{$ThrowMsg}(undef, $Nest->{'debug'}, "$SRec: recv $Res bytes");
+			};
+		};
+
+	$Continue = 1;
+	while ($Continue)
+		{
+		$Continue = 0;
+		my $Socket = undef;
+
+		@SockArray = $Nest->{'Select'}->can_write($Nest->{'SelectT'});
+		foreach $Socket (@SockArray)
+			{
+			$SRec  = $Nest->{'S2Rec'}->{$Socket};
+
+			my $OutRec  = $SRec->{'Output'}->[0];
+
+			(defined($OutRec) && !$SRec->{'EOF'})
+				or next;
+			
+			my $DataLen = length($OutRec->{'Data'});
+			
+			if (!$DataLen && $SRec->{'TCP'})
+				{ next; }
+
+			$Continue++;
+
+			my $Res = $Socket->send($OutRec->{'Data'}, 0, $OutRec->{'Dest'});
+
+			if (!defined($Res))
+				{
+				&{$EOF}($Nest, $SRec, "send() fatal error");
+				next;
+				};
+
+			if (!(($Res == $DataLen) || ($! == POSIX::EWOULDBLOCK)))
+				{
+				if ($SRec->{'TCP'})
+					{
+					&{$EOF}($Nest, $SRec, "send() fatal error");
+					next;
+					};
+				
+				my ($DP, $DA) = unpack_sockaddr_in($OutRec->{'Dest'});
+				$DA = inet_ntoa($DA);
+				$SRec->{'Error'} = "$SRec: send() error: ".($DataLen - $Res)." bytes were not sent to $DA:$DP";
+				&{$ThrowMsg}($Nest, ($^W || $Nest->{'debug'}), $SRec->{'Error'});
+				
+				shift(@{$SRec->{'Output'}});
+				$SRec->{'BytesOut'} += $Res;
+				next;
+				};
+
+			$SRec->{'ATime'}    =  $CurTime;
+			$SRec->{'BytesOut'} += $Res;
+			
+			if ($SRec->{'TCP'})
+				{
+				substr($OutRec->{'Data'}, 0, $Res) = '';
+				}
+			else
+				{
+				shift(@{$SRec->{'Output'}});
+				&{$UpdatePeer}($SRec, $Socket);
+				};
+
+			&{$ThrowMsg}(undef, ($Nest->{'debug'}), "$SRec: $Res bytes sent to ".$SRec->{'PeerAddr'}.':'.$SRec->{'PeerPort'});
+			};
+		};
+	return 1;
+	};
+
+
+sub SelectT
+	{
+	my ($Nest, $SelectT) = @_;
+	my $Return = $Nest->{'SelectT'};
+	$SelectT and $Nest->{'SelectT'} = $SelectT;
+	return $Return;
+	};
+
+sub SilenceT
+	{
+	my ($Nest, $SilenceT) = @_;
+	my $Return = $Nest->{'SilenceT'};
+	$SilenceT and $Nest->{'SilenceT'} = $SilenceT;
+	return $Return;
+	};
+
+sub Listen
+	{
+	my ($Nest, %Params) = @_;
+
+	if (($Params{'Proto'} =~ m/\A\s*tcp\s*\Z/io) &&
+	    (ref($Params{'Accept'}) ne 'CODE'))
+		{
+		$@ = "'Accept' have to be a 'CODE' reference";
+		return;
+		};
+	
+	my $newSRec = &{$AddSock}($Nest, IO::Socket::INET->new(%Params), \%Params)
+		or return;
+
+	return $newSRec;
+	};
+
+sub Connect
+	{
+	my ($Nest, %Params) = @_;
+	
+	my $newSRec = &{$AddSock}($Nest, IO::Socket::INET->new(%Params), \%Params)
+		or return;
+
+	$newSRec->{'Accept'} = undef;
+
+	return $newSRec;
+	};
+
+sub Gets
+	{
+	my $Nest = shift;
+	my $SRec = shift;
+	$Nest->{'Pool'}->{$SRec}
+		or  &{$ThrowMsg}($Nest, ($^W || $Nest->{'debug'}), "$SRec: bad socket name")
+		and return;
+	return $Nest->{'Pool'}->{$SRec}->Gets(@_);
+	};
+sub Read
+	{
+	my $Nest = shift;
+	my $SRec = shift;
+	$Nest->{'Pool'}->{$SRec}
+		or  &{$ThrowMsg}($Nest, ($^W || $Nest->{'debug'}), "$SRec: bad socket name")
+		and return;
+	return $Nest->{'Pool'}->{$SRec}->Read(@_);
+	};
+sub Recv
+	{
+	my $Nest = shift;
+	my $SRec = shift;
+	$Nest->{'Pool'}->{$SRec}
+		or  &{$ThrowMsg}($Nest, ($^W || $Nest->{'debug'}), "$SRec: bad socket name")
+		and return;
+	return $Nest->{'Pool'}->{$SRec}->Recv(@_);
+	};
+sub Puts
+	{
+	my $Nest = shift;
+	my $SRec = shift;
+	$Nest->{'Pool'}->{$SRec}
+		or  &{$ThrowMsg}($Nest, ($^W || $Nest->{'debug'}), "$SRec: bad socket name")
+		and return;
+	return $Nest->{'Pool'}->{$SRec}->Puts(@_);
+	};
+sub Send
+	{
+	my $Nest = shift;
+	my $SRec = shift;
+	$Nest->{'Pool'}->{$SRec}
+		or  &{$ThrowMsg}($Nest, ($^W || $Nest->{'debug'}), "$SRec: bad socket name")
+		and return;
+	return $Nest->{'Pool'}->{$SRec}->Send(@_);
+	};
+sub PeerAddr
+	{
+	my $Nest = shift;
+	my $SRec = shift;
+	$Nest->{'Pool'}->{$SRec}
+		or  &{$ThrowMsg}($Nest, ($^W || $Nest->{'debug'}), "$SRec: bad socket name")
+		and return;
+	return $Nest->{'Pool'}->{$SRec}->PeerAddr(@_);
+	};
+sub PeerPort
+	{
+	my $Nest = shift;
+	my $SRec = shift;
+	$Nest->{'Pool'}->{$SRec}
+		or  &{$ThrowMsg}($Nest, ($^W || $Nest->{'debug'}), "$SRec: bad socket name")
+		and return;
+	return $Nest->{'Pool'}->{$SRec}->PeerPort(@_);
+	};
+sub LocalAddr
+	{
+	my $Nest = shift;
+	my $SRec = shift;
+	$Nest->{'Pool'}->{$SRec}
+		or  &{$ThrowMsg}($Nest, ($^W || $Nest->{'debug'}), "$SRec: bad socket name")
+		and return;
+	return $Nest->{'Pool'}->{$SRec}->LocalAddr(@_);
+	};
+sub LocalPort
+	{
+	my $Nest = shift;
+	my $SRec = shift;
+	$Nest->{'Pool'}->{$SRec}
+		or  &{$ThrowMsg}($Nest, ($^W || $Nest->{'debug'}), "$SRec: bad socket name")
+		and return;
+	return $Nest->{'Pool'}->{$SRec}->LocalPort(@_);
+	};
+sub Handle
+	{
+	my $Nest = shift;
+	my $SRec = shift;
+	$Nest->{'Pool'}->{$SRec}
+		or  &{$ThrowMsg}($Nest, ($^W || $Nest->{'debug'}), "$SRec: bad socket name")
+		and return;
+	return $Nest->{'Pool'}->{$SRec}->Handle(@_);
+	};
+sub Close
+	{
+	my $Nest = shift;
+	my $SRec = shift;
+	$Nest->{'Pool'}->{$SRec}
+		or  &{$ThrowMsg}($Nest, ($^W || $Nest->{'debug'}), "$SRec: bad socket name")
+		and return;
+	return $Nest->{'Pool'}->{$SRec}->Close(@_);
 	};
 
 1;
@@ -785,7 +922,7 @@ __END__
 Net::Socket::NonBlock - Perl extension for easy creation multi-socket single-thread application,
 especially non-forking TCP servers
 
-I<Version 0.06>
+I<Version 0.10>
 
 =head1 SYNOPSIS
 
@@ -793,20 +930,20 @@ I<Version 0.06>
   # Works on Win32!
   
   use strict;
-  use Net::Socket::NonBlock qw(SafeStr);
+  use Net::Socket::NonBlock;
 
-  $| = 1;
+  $|++;
   
   my $LocalPort   = shift
   	or die "Usage: $0 <LocalPort> <RemoteHost:RemotePort>\n";
   my $RemoteHost  = shift
   	or die "Usage: $0 <LocalPort> <RemoteHost:RemotePort>\n";
   
-  my $SockNest = Net::Socket::NonBlock->new(SelectT  => 0.1,
-                                            SilenceT => 0,
-                                            debug    => $^W,
-                                            BuffSize => 10240,
-                                           )
+  my $SockNest = Net::Socket::NonBlock::Nest->new(SelectT  => 0.1,
+                                                  SilenceT => 0,
+                                                  debug    => $^W,
+                                                  BuffSize => 10240,
+                                                 )
   	or die "Error creating sockets nest: $@\n";
   
   $SockNest->Listen(LocalPort => $LocalPort,
@@ -831,17 +968,17 @@ I<Version 0.06>
   		while(($Str = $SockNest->Read($ClnSock)) && length($Str))
   			{
   			$Pstr .= "  $ClientID From CLIENT ".SafeStr($Str)."\n";
-  			$SockNest->Puts($SrvSock, $Str);
+  			$SrvSock->Puts($Str);
   			};
   		if (!defined($Str))
   			{
   			$Pstr .= "  $ClientID CLIENT closed\n"; 
-  			$SockNest->Close($ClnSock);
-  			$SockNest->Close($SrvSock);
+  			$SockNest->Close($ClnSock); # Old-style method call
+  			$SrvSock->Close();          # OO-style method call
   			delete($ConPool{$ClnSock});
   			next;
   			};
-  		while(($Str = $SockNest->Read($SrvSock)) && length($Str))
+  		while(($Str = $SrvSock->Read()) && length($Str))
   			{
   			$Pstr .= "  $ClientID From SERVER ".SafeStr($Str)."\n";
   			$SockNest->Puts($ClnSock, $Str);
@@ -850,7 +987,7 @@ I<Version 0.06>
   			{
   			$Pstr .= "  $ClientID SERVER closed\n"; 
   			$SockNest->Close($ClnSock);
-  			$SockNest->Close($SrvSock);
+  			$SrvSock->Close();
   			delete($ConPool{$ClnSock});
   			next;
   			};
@@ -868,14 +1005,14 @@ I<Version 0.06>
   	if(!$ConPool{$ClnSock})
   		{
   		warn "Can not connect to '$RemoteHost': $@\n";
-  		$SockNest->Close($ClnSock);
+  		$ClnSock->Close();
   		delete($ConPool{$ClnSock});
   		return;
   		};
   	return 1;
   	};
 
-  sub SafeStr($)
+  sub SafeStr
 	{
 	my $Str = shift
 		or return '!UNDEF!';
@@ -892,30 +1029,30 @@ and provides you the asynchronous Input-Output functions.
 Module was designed as a part of a multi-connection SMTP relay
 for WinNT platform.
 
-=head1 The C<Net::Socket::NonBlock> methods
+The C<Net::Socket::NonBlock> module contains two packages:
+C<Net::Socket::NonBlock> and C<Net::Socket::NonBlock::Nest>.
+
+=head1 The C<Net::Socket::NonBlock::Nest> methods
 
 =over 4
 
 =item C<new(%PARAMHASH);>
 
-The C<new> method creates the C<SocketsNest> object and returns a handle to it.
+The C<new> method creates the C<Net::Socket::NonBlock::Nest> object and returns a handle to it.
 This handle is then used to call the methods below.
 
-The C<SocketsNest> itself is the table contains socket handlers, InOut buffers, etc.
-C<SocketsNest> also contain a C<IO::Select> object which is common
-for all sockets in C<SocketsNest>.
+The C<Net::Socket::NonBlock::Nest> object itself is the table contains socket handlers,
+InOut buffers, etc.
+C<Net::Socket::NonBlock::Nest> object also contain a C<IO::Select> object which is common
+for all sockets generated from this nest.
 
-To create new socket you will have to use C<Listen> or C<Connect> methods (see below).
+To create new socket you should use C<Listen> or C<Connect> methods (see below).
 Also, socket could be created automatically during TCP connection accept procedure
-inside of C<IO> method.
+inside of C<Net::Socket::NonBlock::Nest::IO()> method.
 
 The I<%PARAMHASH> could contain the following keys:
 
-=over 4
-
-=item Z<>
-
-=over 4
+=over 8
 
 =item C<SelectT>
 
@@ -937,10 +1074,10 @@ C<Properties> method (see below).
 =item C<BuffSize>
 
 The size of buffer for C<IO::Socket::INET-E<gt>recv> function (see L<IO::Socket::INET>).
-Default if C<POSIX::BUFSIZ> (see C<POSIX>).
+Default is C<POSIX::BUFSIZ> (see C<POSIX>).
 
 This is default for all sockets which will be created and could be overwritten by 
-C<Listen>, C<Connect> or C<Properties>.
+C<Listen>, C<Connect> or C<Properties> methods.
 
 =item C<debug>
 
@@ -948,19 +1085,17 @@ If true, additional debug info will be printed during program execution.
 
 =back
 
-=back
+=item C<newNest();>
 
-=item C<NestProperties([%PARAMHASH]);>
+Just a synonym for C<Net::Socket::NonBlock::Nest-E<gt>new()>
 
-The C<NestProperties> method returns the hash in list context
+=item C<Properties([%PARAMHASH]);>
+
+The C<Properties> method returns the hash in list context
 or pointer to the hash in scalar context.
 Hash itself is containing nest properties which are:
 
-=over 4
-
-=item Z<>
-
-=over 4
+=over 8
 
 =item C<Sockets>
 
@@ -978,15 +1113,9 @@ See C<new()> for detailed explanation.
 
 =back
 
-=back
-
 The following parameters could be changed if new value will be provided in the I<C<%PARAMHASH>>:
 
-=over 4
-
-=item Z<>
-
-=over 4
+=over 8
 
 =item C<SelectT>
 
@@ -998,7 +1127,9 @@ The following parameters could be changed if new value will be provided in the I
 
 =back
 
-=back
+=item C<NestProperties();>
+
+Just a synonym for C<Net::Socket::NonBlock::Nest::Properties()>
 
 =item C<IO([$Errors]);>
 
@@ -1007,9 +1138,10 @@ accept incoming connection, close sockets, etc.
 You have to call it periodically, as frequently as possible.
 
 I<C<$Errors>> could be a reference to the array. After the C<IO()> call this array will
-conatin the messages for errors ocured during the call. Note: C<IO()> cleans this array every time.
+conatin the messages for errors ocured during the call.
+Note: C<IO()> cleans this array every time.
 
-C<IO> always returns 1.
+C<Net::Socket::NonBlock::Nest::IO()> always returns 1.
 
 =item C<SelectT([$Timeout]);>
 
@@ -1019,11 +1151,7 @@ I<C<SelectT>>.
 If I<C<$Timeout>> is specified the C<SelectT> method set the I<C<SelectT>> to the
 provided value and returns a previous one.
 
-=back
-
-=head2 The C<Net::Socket::NonBlock> methods for manipulating sockets
-
-=over 4
+This method is provided for hysterical raisin. Please use the C<Properties> method instead.
 
 =item C<Listen(%PARAMHASH);>
 
@@ -1032,11 +1160,7 @@ The C<Listen> method create new socket listening on I<C<LocalAddr:LocalPort>>.
 The C<Listen> take the same list of arguments as C<IO::Socket::INET-E<gt>new()>
 with some additions:
 
-=over 4
-
-=item Z<>
-
-=over 4
+=over 8
 
 =item C<SilenceT>
 
@@ -1046,9 +1170,10 @@ Silence timeout. See C<new()> for details.
 
 Contains the pointer to the external accept function provided by you.
 
-When the new connection will be detected by listening TCP socket the new socket will be created by
-C<IO::Socket::INET-E<gt>accept()>. After that the external I<C<Accept>> function
-will be called with just one parameter: the ID for the new socket.
+When the new connection will be detected by listening TCP socket the new
+C<Net::Socket::NonBlock> object will be created.
+After that the external I<C<Accept>> function
+will be called with just one parameter: the new C<Net::Socket::NonBlock> object.
 
 External I<C<Accept>> have to return I<C<true>> value otherwise new socket
 will be closed and connection will be rejected.
@@ -1061,7 +1186,7 @@ If current number of children of this listening socket
 is bigger than C<MaxClients> new connections are not accepted.
 
 C<'0'> mean 'do not accept new connections'.
-The default is '9999999999' which is quite close to unlimited.
+The default is C<'9999999999'> which is quite close to unlimited.
 
 =item C<ClientsST>
 
@@ -1069,7 +1194,9 @@ The silence timeout for children sockets. Default is the nest C<SilenceT>.
 
 =back
 
-=back
+C<Listen()> method returns a C<Net::Socket::NonBlock> object.
+In case of problems C<Listen()> returns an I<C<undef>> value.
+I<C<$@>> will contain an error message.
 
 =item C<Connect(%PARAMHASH);>
 
@@ -1079,9 +1206,8 @@ The C<Connect()> take the same list of arguments as C<IO::Socket::INET-E<gt>new(
 with same additions as C<Listen()>.
 The I<Proto> key is required.
 
-C<Connect()> method returns the I<C<SocketID>>, the symbolic name 
-which have to be used for work with particular socket in nest using C<Gets()>, C<Puts()>,
-C<Recv()> and C<Properties()> methods. In case of problems C<Connect()> returns an I<C<undef>> value.
+C<Connect()> method returns a C<Net::Socket::NonBlock> object.
+In case of problems C<Connect()> returns an I<C<undef>> value.
 I<C<$@>> will contain an error message.
 
 =item I<Important note>
@@ -1089,7 +1215,21 @@ I<C<$@>> will contain an error message.
 C<Listen> and C<Connect> are synchronous. So if connection establishing take a long time
 - for eaxmple because of slow DNS resolving - your program will be frozen for a long time.
 
-=item C<Gets($SocketID, [$MaxLength]);>
+=back
+
+=head1 The C<Net::Socket::NonBlock> methods
+
+=over 4
+
+=item new() and  newNest()
+
+Just the synonyms for C<Net::Socket::NonBlock::Nest-E<gt>new()>
+
+I<Note: to create new C<Net::Socket::NonBlock> object you should use
+C<Net::Socket::NonBlock::Nest-E<gt>new()> or C<Net::Socket::NonBlock::Nest-E<gt>Connect()>
+methods>
+
+=item C<Gets([$MaxLength]);>
 
 For TCP sockets the C<Gets> method returns a string received from corresponding socket.
 "String" means I<C<(.*\n)>>.
@@ -1111,7 +1251,7 @@ It will be adjusted automaticaly otherwise.
 
 If no data available for reading, C<Gets> returns empty string.
 
-If socket closed or I<C<$SocketID>> is invalid C<Gets> returns an I<C<undef>> value.
+If socket closed C<Gets> returns an I<C<undef>> value.
 I<C<$@>> will contain an error message.
 
 In list context method returns an array of 3 elements:
@@ -1120,12 +1260,12 @@ In list context method returns an array of 3 elements:
 [2] - PeerPort
 
 Note: C<Gets> is not reading data from the socket but takes it from special buffer filled by
-C<IO> method with data read from socket during last call.
+C<Net::Socket::NonBlock::Nest::IO()> method with data read from socket during last call.
 
 If you did not read all the data available in buffer new data will be appended
 to the end of buffer.
 
-=item C<Recv($SocketID, [$MaxLength]);>
+=item C<Recv([$MaxLength]);>
 
 For TCP sockets the C<Recv> method returns all data available from corresponding socket
 if data length is no more than I<C<$MaxLength>>. Otherwise I<C<$MaxLength>> bytes returned.
@@ -1139,7 +1279,7 @@ Default I<C<$MaxLength>> is socket I<C<BiffSize>>.
 
 If no data available for reading, C<Recv> returns empty string.
 
-If socket is closed or I<C<$SocketID>> is invalid C<Recv> returns an I<C<undef>> value.
+If socket is closed C<Recv> returns an I<C<undef>> value.
 I<C<$@>> will contain an error message.
 
 In list context method returns an array of 3 elements:
@@ -1148,9 +1288,9 @@ In list context method returns an array of 3 elements:
 [2] - PeerPort
 
 Note: C<Recv> is not reading data from the socket but takes it from special buffer filled by
-C<IO> method.
+C<Net::Socket::NonBlock::Nest::IO()> method.
 
-=item C<Read($SocketID, [$MaxLength]);>
+=item C<Read([$MaxLength]);>
 
 This method is little bit eclectic but I found it useful.
 
@@ -1160,10 +1300,10 @@ Otherwise it will act as C<Recv>.
 I<C<$MaxLength>> for C<Read> have to be no more than C<32766>.
 It will be adjusted automaticaly otherwise.
 
-If socket is closed or I<C<$SocketID>> is invalid C<Recv> returns an I<C<undef>> value.
+If socket is closed C<Recv> returns an I<C<undef>> value.
 I<C<$@>> will contain an error message.
 
-=item C<Puts($SocketID, $Data, $PeerAddr, $PeerPort);>
+=item C<Puts($Data [, $PeerAddr, $PeerPort]);>
 
 The C<Puts> method puts data to the corresponding socket outgoing buffer.
 
@@ -1171,18 +1311,18 @@ I<C<$PeerAddr:$PeerPort>> pair is the destination which I<C<$Data>> must be sent
 If not specified these fields will be taken from socket properties.
 I<C<$PeerAddr:$PeerPort>> will be ignored on TCP sockets.
 
-If socket is closed or I<C<$SocketID>> is invalid C<Recv> returns an I<C<undef>> value.
+If socket is closed C<Recv> returns an I<C<undef>> value.
 I<C<$@>> will contain an error message.
 Otherwise it returns 1.
 
 Note: C<Puts> is not writing data directly to the socket but puts it to the special buffer
-which will be flushed to socket by C<IO> method during next call.
+which will be flushed to socket by C<Net::Socket::NonBlock::Nest::IO()> method during next call.
 
-=item C<Send($SocketID, $Data);>
+=item C<Send();>
 
-Just a synonym for C<Puts>.
+Just a synonym for C<Puts()>.
 
-=item C<PeerAddr($SocketID);>
+=item C<PeerAddr();>
 
 For TCP sockets the C<PeerAddr> method returns the IP address which is socket connected to or
 empty string for listening sockets.
@@ -1190,10 +1330,10 @@ empty string for listening sockets.
 For non-TCP sockets the C<PeerAddr> method returns the IP address which was used for sending 
 last time or IP address which is corresponding to data read by last C<Gets> or C<Recv> call.
 
-If socket is closed or I<C<$SocketID>> is invalid C<Recv> returns an I<C<undef>> value.
+If socket is closed C<Recv> returns an I<C<undef>> value.
 I<C<$@>> will contain an error message.
 
-=item C<PeerPort($SocketID);>
+=item C<PeerPort();>
 
 For TCP sockets the C<PeerPort> method returns the IP address which is socket connected to or
 empty string for listening sockets.
@@ -1202,41 +1342,37 @@ I<C<undef>>
 For non-TCP sockets the C<PeerPort> method returns the port which was used for sending 
 last time or port which is corresponding to data read by last C<Gets> or C<Recv> call.
 
-If socket is closed or I<C<$SocketID>> is invalid C<Recv> returns an I<C<undef>> value.
+If socket is closed C<Recv> returns an I<C<undef>> value.
 I<C<$@>> will contain an error message.
 
-=item C<LocalAddr($SocketID);>
+=item C<LocalAddr();>
 
 The C<LocalAddr> method returns the IP address for this end of the socket connection.
 
-If socket closed or I<C<$SocketID>> is invalid C<LocalAddr> returns I<C<undef>>.
+If socket closed C<LocalAddr> returns I<C<undef>>.
 
-=item C<LocalPort($SocketID);>
+=item C<LocalPort();>
 
 The C<LocalPort> method returns the IP address for this end of the socket connection.
 
-If socket is closed or I<C<$SocketID>> is invalid C<Recv> returns an I<C<undef>> value.
+If socket is closed C<Recv> returns an I<C<undef>> value.
 I<C<$@>> will contain an error message.
 
-=item C<Handle($SocketID);>
+=item C<Handle();>
 
 The C<Handle> method returns the handle to the C<IO::Socket::INET> object
-associated with I<C<$SocketID>> or I<C<undef>> if I<C<$SocketID>> is invalid or socket closed.
+associated with C<Net::Socket::NonBlock> object or I<C<undef>> if socket closed.
 
-=item C<Properties($SocketID, [%PARAMHASH]);>
+=item C<Properties([%PARAMHASH]);>
 
 The C<Properties> method returns the hash in list context or pointer to the hash in scalar context.
 Hash itself is containing socket properties which are:
 
-=over 4
-
-=item Z<>
-
-=over 4
+=over 8
 
 =item C<Handle>
 
-The handle to the socket associated with I<C<$SocketID>>. Read-only.
+The handle to the socket associated with C<Net::Socket::NonBlock> object. Read-only.
 
 =item C<Input>
 
@@ -1317,14 +1453,13 @@ The size of buffer for C<IO::Socket::INET-E<gt>recv> function.
 
 =item C<Error>
 
-The message for last error ocured on this socket during last C<IO> call.
+The message for last error ocured on this socket during last
+C<Net::Socket::NonBlock::Nest::IO()> call.
 Or just an empty string if no errors.
 
 =back
 
-=back
-
-The following parameters could be changed if new value will be provided in the I<C<%PARAMHASH>>:
+The following parameters could be changed if new value is provided in the I<C<%PARAMHASH>>:
 
 =over 4
 
@@ -1349,17 +1484,17 @@ The following parameters could be changed if new value will be provided in the I
 I<It is useless to set C<MaxClients> or C<ClientsST> or C<Accept> 
 for any sockets except TCP listening sockets>
 
-If socket is closed or I<C<$SocketID>> is invalid C<Recv> returns an I<C<undef>> value.
+If socket is closed C<Properties> returns an I<C<undef>> value.
 I<C<$@>> will contain an error message.
 
 =back
 
-=item C<Close($SocketID [, $Flush [, $Timeout]]);>
+=item C<Close([$Flush [, $Timeout]]);>
 
-Put the "close" request for the socket I<C<$SocketID>>.
-The actual removing will be done by C<IO> method during next call.
+Put the "close" request for the C<Net::Socket::NonBlock> object.
+The actual removing will be done by C<Net::Socket::NonBlock::Nest::IO()> method during next call.
 
-I<C<$Flush>> is a boolean parameter which tells C<IO> method to flush the output buffer
+I<C<$Flush>> is a boolean parameter which tells C<Net::Socket::NonBlock::Nest::IO()> method to flush the output buffer
 before close the socket.
 
 I<C<$Timeout>> is an amount of seconds after that the socket will be closed
@@ -1369,7 +1504,26 @@ B<Remember: it is important to call C<Close> for all socket which have to be rem
 even they become to be unavailable because of I<C<send()>> or I<C<recv()>> error
 or silence timeout.>
 
+=item C<close()>
+
+Just a synonym for C<Close()>
+
 =back
+
+B<Note:>
+
+For historical reason the methods 
+C<Properties()>, C<Gets()>, C<Read()>, C<Recv()>, C<Puts()>, C<Send()>, C<PeerAddr()>,
+C<PeerPort()>, C<LocalAddr()>, C<LocalPort()>, C<Handle()> and C<Close()>
+could be called in form
+
+C<$SocketNest-E<gt>I<methodName>(I<SocketID>, I<methodParams>)>
+
+I<C<SocketID>> could be the reference to the C<Net::Socket::NonBlock> object
+or this reference converted to the string.
+
+This form could be usefull if you have the C<Net::Socket::NonBlock> object reference
+only as a string, for example if you are using it as a hash key.
 
 =head2 EXPORT
 

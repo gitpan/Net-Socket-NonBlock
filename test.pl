@@ -5,6 +5,10 @@
 
 # change 'tests => 1' to 'tests => last_test_to_print';
 
+use strict;
+
+$^W++;
+
 use Test;
 BEGIN { plan tests => 8 };
 use Net::Socket::NonBlock;
@@ -21,6 +25,7 @@ my $SockNest = Net::Socket::NonBlock->new(SilenceT => 10,
                                          )
 	or die "Can not create socket nest: $@";
 
+
 # Autoflush on
 $| = 1;
 
@@ -28,13 +33,14 @@ my $Incoming = undef;
 
 my $LocalAddr = 'localhost';
 
-my $Server = $SockNest->Listen(LocalAddr  => $LocalAddr,
-                               Proto      => 'tcp',
-                               Accept     => sub { $Incoming = $_[0]; return 1; },
-                               Listen     => 10,
-                               MaxClients => 1,
+my $Server = $SockNest->Listen('LocalAddr'  => $LocalAddr,
+                               'Proto'      => 'tcp',
+                               'Accept'     => sub { $Incoming = $_[0]; return 1; },
+                               'Listen'     => 10,
+                               'MaxClients' => 1,
                                )
 	or die "Could not create server: $@";
+
 
 print "server created.........................";
 ok(2);
@@ -42,7 +48,7 @@ ok(2);
 my $Client = $SockNest->Connect(PeerAddr => $LocalAddr,
                                 PeerPort => $SockNest->LocalPort($Server),
                                 Proto    => 'tcp',)
-	or die "Can not create client connection to \"$Addr:$Port\": $@";
+	or die "Can not create client connection: $@";
 
 print "client connection created..............";
 ok(3);
@@ -100,7 +106,7 @@ $SockNest->Close($Client);
 $SockNest->Close($Incoming);
 $SockNest->Close($Server);
 
-$SockNest->IO($tmpArray);
+$SockNest->IO();
 
 $SockCount = ($SockNest->NestProperties())->{'Sockets'};
 ($SockCount == 0)
