@@ -1,0 +1,9 @@
+Revision history for Perl extension Net::Socket::NonBlock.
+
+0.02  Fri Apr 26 17:43:45 2002
+	- first public release
+
+0.01  Fri Apr 26 17:43:45 2002
+	- original version; created by h2xs 1.21 with options
+		-AXcfn Net::Socket::NonBlock
+	  "friends and family release"
