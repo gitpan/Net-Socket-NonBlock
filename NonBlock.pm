@@ -2,32 +2,23 @@ package Net::Socket::NonBlock;
 
 use strict;
 
-#$^W++;
-
 use vars qw($VERSION @ISA @EXPORT @EXPORT_OK %EXPORT_TAGS);
 
 require Exporter;
 
 @ISA = qw(Exporter);
 
-# Items to export into callers namespace by default. Note: do not export
-# names by default without a very good reason. Use EXPORT_OK instead.
-# Do not simply export all your public functions/methods/constants.
-
-# This allows declaration	use Net::Socket::NonBlock ':all';
-# If you do not need this, moving things directly into @EXPORT or @EXPORT_OK
-# will save memory.
-		
-
 %EXPORT_TAGS = ('functions'  => [qw(SafeStr)],
                );
 
-foreach (keys(%EXPORT_TAGS))
-	{
-	if ($_ eq 'all')
-		{ next; };
-	push(@{$EXPORT_TAGS{'all'}}, @{$EXPORT_TAGS{$_}});
-	};
+my $Key = undef;
+foreach $Key (keys(%EXPORT_TAGS))
+        {
+
+        if ($Key eq 'all')
+                { next; };
+        push(@{$EXPORT_TAGS{'all'}}, @{$EXPORT_TAGS{$Key}});
+        };
 
 
 @EXPORT_OK = ( @{ $EXPORT_TAGS{'all'} } );
@@ -35,7 +26,7 @@ foreach (keys(%EXPORT_TAGS))
 @EXPORT = qw(
 );
 
-$VERSION = '0.04';
+$VERSION = '0.06';
 
 use IO::Socket;
 use IO::Select;
@@ -44,33 +35,34 @@ use Carp;
 
 # Preloaded methods go here.
 
-my $glErrorMsg = '';
+my $ThrowMsg = sub($$$$)
+	{
+	my ($self, $CarpCond, $Msg) = @_;
+
+	$CarpCond
+		and Carp::carp $Msg;
+
+	($self && $self->{'ErrArray'})
+		and push(@{$self->{'ErrArray'}}, $Msg);
+
+	return 1;
+	};
 
 sub new($%)
 	{
 	my ($class, %Params) = @_;
 
-	my $Select = IO::Select->new()
+	my $self = {};
+
+	$self->{'Select'}     = IO::Select->new()
 		or return;
-
-	return bless {'Select'     => IO::Select->new(),
-		      'Pool'       => {},
-		      'SelectT'    => (defined($Params{'SelectT'})    ? $Params{'SelectT'}    : 0.05),
-		      'SilenceT'   => (defined($Params{'SilenceT'})   ? $Params{'SilenceT'}   : 0),
-                      'BuffSize'   => (defined($Params{'BuffSize'})   ? $Params{'BuffSize'}   : POSIX::BUFSIZ),
-                      'MaxClients' => (defined($Params{'MaxClients'}) ? $Params{'MaxClients'} : 9999999999),
-                      'debug'      => (defined($Params{'debug'})      ? $Params{'debug'}      : 0),
-                     } => $class;
-	};
-
-my $WrongSName = sub($)
-	{
-	foreach (keys(%{$_[0]->{'Pool'}}))
-		{
-		if (!length($_))
-			{ confess sprintf("Empty socket name %s %s %s\n", caller()); };
-		};
-
+	$self->{'Pool'}       = {};
+	$self->{'SelectT'}    = (defined($Params{'SelectT'})    ? $Params{'SelectT'}    : 0.05);
+	$self->{'SilenceT'}   = (defined($Params{'SilenceT'})   ? $Params{'SilenceT'}   : 0);
+        $self->{'BuffSize'}   = (defined($Params{'BuffSize'})   ? $Params{'BuffSize'}   : POSIX::BUFSIZ);
+        $self->{'MaxClients'} = (defined($Params{'MaxClients'}) ? $Params{'MaxClients'} : 9999999999);
+        $self->{'debug'}      = (defined($Params{'debug'})      ? $Params{'debug'}      : 0);
+	return bless $self => $class;
 	};
 
 my $Die = sub($)
@@ -80,11 +72,10 @@ my $NonBlock = sub($)
 	{
 	if ( $^O !~ m/win32/i)
 		{
-		my $Flags = fcntl($_[0], F_GETFL, 0);
-		if (!$Flags)
-			{ croak "Can not get flags for socket: \"$!\". Exiting."; };
-		if (!fcntl($_[0], F_SETFL, $Flags | O_NONBLOCK))
-			{ croak "Can not make socket non-blocking: \"$!\". Exiting."; };
+		my $Flags = fcntl($_[0], F_GETFL, 0)
+			or &{$Die}("Can not get flags for socket: $!");
+		fcntl($_[0], F_SETFL, $Flags | O_NONBLOCK)
+			or &{$Die}("Can not make socket non-blocking: $!");
 		};
 	return $_[0];
 	};
@@ -114,31 +105,34 @@ my $SockName = sub($$)
 
 my $NewSRec = sub($$$%)
 	{
-	my ($self, $Socket, $CTime, %Params) = @_;
+	my ($self, $Socket, $CTime, $Params) = @_;
 
-	$Params{'Proto'} =~ m/\A\s*(.*)\s*\Z/;
-	$Params{'Proto'} = "\U$1";
+	$Params->{'Proto'} =~ m/\A\s*(.*)\s*\Z/;
+	$Params->{'Proto'} = "\U$1";
 	my $SRec = {'Socket'     => $Socket,
-		    'SilenceT'   => (defined($Params{'SilenceT'})   ? $Params{'SilenceT'}   : $self->{'SilenceT'}),
-                    'BuffSize'   => (defined($Params{'BuffSize'})   ? $Params{'BuffSize'}   : $self->{'BuffSize'}),
-                    'MaxClients' => (defined($Params{'MaxClients'}) ? $Params{'MaxClients'} : $self->{'MaxClients'}),
-                    'ClientsST'  => (defined($Params{'ClientsST'})  ? $Params{'ClientsST'}  : $self->{'SilenceT'}),
+		    'SilenceT'   => (defined($Params->{'SilenceT'})   ? $Params->{'SilenceT'}   : $self->{'SilenceT'}),
+                    'BuffSize'   => (defined($Params->{'BuffSize'})   ? $Params->{'BuffSize'}   : $self->{'BuffSize'}),
+                    'MaxClients' => (defined($Params->{'MaxClients'}) ? $Params->{'MaxClients'} : $self->{'MaxClients'}),
+                    'ClientsST'  => (defined($Params->{'ClientsST'})  ? $Params->{'ClientsST'}  : $self->{'SilenceT'}),
                     'Clients'    => 0,
-                    'MCReached'  => 0,
 	            'Parent'     => '',
 	            'BytesIn'    => 0,
 	            'BytesOut'   => 0,
 	            'CTime'      => $CTime,
 	            'ATime'      => $CTime,
-	            'Proto'      => $Params{'Proto'},
-	            'TCP'        => ($Params{'Proto'} eq 'TCP'),
-	            'Accept'     => $Params{'Accept'},
+	            'Proto'      => $Params->{'Proto'},
+	            'TCP'        => ($Params->{'Proto'} eq 'TCP'),
+	            'Accept'     => $Params->{'Accept'},
 	            'PeerAddr'   => '',
 	            'PeerPort'   => '',
 	            'LocalAddr'  => '',
 	            'LocalPort'  => '',
 	            'Input'      => [],
 	            'Output'     => [],
+	            'Close'      => 0,
+	            'Flush'      => 0,
+	            'CloseAt'    => 0,
+	            'Error'      => '',
 	           };
 
 	&{$UpdatePeer}($SRec, $Socket);
@@ -161,60 +155,14 @@ my $NewSRec = sub($$$%)
 	return wantarray ? %{$SRec} : $SRec;
 	};
 
-my $IsDead = sub($$)
-	{
-	return (!defined($_[0]->{'Pool'}->{$_[1]}) ||
-	        $_[0]->{'Pool'}->{$_[1]}->{'FatalError'} ||
-	        $_[0]->{'Pool'}->{$_[1]}->{'Close'});
-	};
-
-my $Close = sub($$)
-	{
-	my ($self, $SName) = @_;
-
-	if (!defined($self->{'Pool'}->{$SName}))
-		{ return; };
-	
-	$self->{'Select'}->remove($self->{'Pool'}->{$SName}->{'Socket'});
-
-	if (defined($self->{'Pool'}->{$SName}->{'Parent'}) &&
-	     length($self->{'Pool'}->{$SName}->{'Parent'}))
-		{
-		$self->{'Pool'}->{$self->{'Pool'}->{$SName}->{'Parent'}}->{'MCReached'} = 0;
-		$self->{'Pool'}->{$self->{'Pool'}->{$SName}->{'Parent'}}->{'Clients'}--;
-		};
-	
-	close($self->{'Pool'}->{$SName}->{'Socket'});
-	delete($self->{'Pool'}->{$SName});
-	return;
-	};
-
-my $FatalError = sub($$)
-	{
-	my ($self, $SName) = @_;
-	$self->{'Pool'}->{$SName}->{'FatalError'}++;
-	$self->{'Select'}->remove($self->{'Pool'}->{$SName}->{'Socket'});
-	return;
-	};
-
 my $BuffSize = sub ($$$)
 	{
-	if (&{$IsDead}($_[0], $_[1]))
-		{
-		#if ($^W || $_[0]->{'debug'}) { carp "Socket \"".$_[1]."\" is not available.\n"; };
-		return;
-		};
-
-	my ($self, $SName, $BufName) = @_;
-
-	if (!defined($self->{'Pool'}->{$SName}->{$BufName}))
-		{
-		if ($self->{'debug'}) { carp "Buffer \"$BufName\" is not exists for socket \"$SName\".\n"; };
-		return;
-		};
+	my ($self, $SName, $BuffName) = @_;
+	($self->{'Pool'}->{$SName} && $self->{'Pool'}->{$SName}->{$BuffName})
+		or &{$Die}("$SName: buffer '$BuffName' does not exists");
 
 	my $Result = 0;
-        foreach (@{$self->{'Pool'}->{$SName}->{$BufName}})
+        foreach (@{$self->{'Pool'}->{$SName}->{$BuffName}})
 		{
 		$Result += length($_->{'Data'});
 		};
@@ -224,25 +172,69 @@ my $BuffSize = sub ($$$)
 
 my $BuffEmpty = sub ($$$)
 	{
-	my ($self, $SName, $Buff) = @_;
+	my ($self, $SName, $BuffName) = @_;
+	($self->{'Pool'}->{$SName} && $self->{'Pool'}->{$SName}->{$BuffName})
+		or &{$Die}("$SName: buffer '$BuffName' does not exists");
 
-	if (&{$IsDead}($self, $SName))
+	if ($self->{'Pool'}->{$SName}->{'TCP'})
+		{ return (!length($self->{'Pool'}->{$SName}->{$BuffName}->[0]->{'Data'})); };
+
+	return (!scalar(@{$self->{'Pool'}->{$SName}->{$BuffName}}));
+	};
+
+my $SockAvail = sub($$)
+	{
+	my ($self, $SName) = @_;
+
+	if (!$self->{'Pool'}->{$SName})
 		{
-	#	if ($^W || $self->{'debug'}) { carp "Socket \"".$SName."\" is not available.\n"; };
+		$@ = "not exists";
 		return;
 		};
 
-	if ($self->{'Pool'}->{$SName}->{'TCP'})
-		{ return (!length($self->{'Pool'}->{$SName}->{$Buff}->[0]->{'Data'})); };
+	if ($self->{'Pool'}->{$SName}->{'Close'} ||
+	    ($self->{'Pool'}->{$SName}->{'EOF'} &&
+	     &{$BuffEmpty}($self, $SName, 'Input')))
+		{
+		$@ = $self->{'Pool'}->{$SName}->{'Error'};
+		return;
+		};
 
-	carp sprintf ("a %s->{'Pool'}->{%s}->{%s} = \"%s\"\n", $self, $SName, $Buff, $self->{'Pool'}->{$SName}->{$Buff});
-	
-	return (!scalar(@{$self->{'Pool'}->{$SName}->{$Buff}}));
+	return 1;
 	};
 
-my $Eof = sub($$)
+my $Close = sub($$)
 	{
-	return ($_[0]->{'Pool'}->{$_[1]}->{'EOF'} && &{$BuffEmpty}($_[0], $_[1], 'Input'));
+	my ($self, $SName) = @_;
+
+	$self->{'Pool'}->{$SName}
+		or &{$Die}("$SName: does not exists");
+	
+	$self->{'Select'}->remove($self->{'Pool'}->{$SName}->{'Socket'});
+
+	if ($self->{'Pool'}->{$SName}->{'Parent'} &&
+	    $self->{'Pool'}->{$self->{'Pool'}->{$SName}->{'Parent'}})
+		{
+		$self->{'Pool'}->{$self->{'Pool'}->{$SName}->{'Parent'}}->{'Clients'}--;
+		};
+	
+	$self->{'Pool'}->{$SName}->{'Socket'}->close();
+	delete($self->{'Pool'}->{$SName});
+	return 1;
+	};
+
+my $EOF = sub($$$)
+	{
+	my ($self, $SName, $Error) = @_;
+	$self->{'Pool'}->{$SName}->{'EOF'}++;
+	if (length($Error))
+		{
+		$self->{'Pool'}->{$SName}->{'Error'} = $Error;
+		$@ = $Error;
+		&{$ThrowMsg}($self, ($^W || $self->{'debug'}), "$SName: $Error");
+		};
+	$self->{'Select'}->remove($self->{'Pool'}->{$SName}->{'Socket'});
+	return;
 	};
 
 my $Cleanup = sub($$)
@@ -254,73 +246,86 @@ my $Cleanup = sub($$)
 
 	if ($SRec->{'Close'})
 		{
-		my $Msg = $SRec->{'Proto'}." socket \"$SName\" closed by request.\n";
-		if ($self->{'debug'}) { carp $Msg; };
-		#$@ .= $Msg;
-		&{$Close}($self, $SName);
+		if    (!$SRec->{'Flush'})
+			{
+			&{$ThrowMsg}($self, $self->{'debug'}, $SRec->{'Proto'}." socket $SName closed by request");
+			&{$Close}($self, $SName);
+			return;
+			}
+		elsif (&{$BuffEmpty}($self, $SName, 'Output'))
+			{
+			&{$ThrowMsg}($self, $self->{'debug'}, $SRec->{'Proto'}." socket $SName closed after flush");
+			&{$Close}($self, $SName);
+			return;
+			}
+		elsif ($SRec->{'CloseAt'} && ($SRec->{'CloseAt'} < $CurTime))
+			{
+			&{$ThrowMsg}($self, $self->{'debug'}, $SRec->{'Proto'}." socket $SName closed by flush timeout");
+			&{$Close}($self, $SName);
+			return;
+			};
 		}
 	elsif ($SRec->{'SilenceT'} &&
 	       ($SRec->{'SilenceT'} < ($CurTime - $SRec->{'ATime'})) &&
 	       &{$BuffEmpty}($self, $SName, 'Input') && 
 	       &{$BuffEmpty}($self, $SName, 'Output'))
 		{
-		my $Msg =$SRec->{'Proto'}." socket \"$SName\" closed by silence timeout.\n";
-		if ($self->{'debug'}) { carp $Msg; };
-		#$@ .= $Msg;
-		&{$Close}($self, $SName);
+		&{$EOF}($self, $SName, "silence timeout occurred");
+		return;
 		};
-	return sprintf("$SName: %d in, %d out\n", &{$BuffSize}($self, $SName, 'Input'), &{$BuffSize}($self, $SName, 'Output'));
+	return sprintf("$SName: %d in, %d out", &{$BuffSize}($self, $SName, 'Input'), &{$BuffSize}($self, $SName, 'Output'));
+	};
+
+my $AddSock = sub
+	{
+	my ($self, $newSock, $Params) = @_;
+
+	$newSock or return;
+
+	my $newName = &{$SockName}($self, $newSock);
+	
+	$self->{'Pool'}->{$newName}
+		and &{$Die}("Socket $newName already in use");
+
+	$self->{'Select'}->add(&{$NonBlock}($newSock))
+	        or $newSock->close()
+		and $@ = "Can not add socket to select: $@"
+		and return;
+	
+	$self->{'Pool'}->{$newName} = &{$NewSRec}($self, $newSock, time(), $Params);
+
+	return $newName;
 	};
 
 my $Accept = sub($$)
 	{
 	my ($self, $PName) = @_;
 
-	my $PRec = $self->{'Pool'}->{$PName};
+	my $PRec = $self->{'Pool'}->{$PName}
+		or &{$Die}("Socket '$PName' is not exists");
 
-	if ($PRec->{'Clients'} >= $PRec->{'MaxClients'})
+	if (!($PRec->{'Clients'} < $PRec->{'MaxClients'}))
 		{
-		if ($PRec->{'MCReached'})
-			{ return -1; };
-		$PRec->{'MCReached'}++;
-		return 0;
-		};
-
-	my $newSock = &{$NonBlock}($PRec->{'Socket'}->accept());
-	
-	if (!defined($newSock))
-		{
-		$glErrorMsg = $PRec->{'Proto'}." socket \"$PName\" can not accept connection: $@.\n";
+		$@ = "maximum number of clients exceeded";
 		return;
 		};
-	
-	my $newName = &{$SockName}($self, $newSock);
-	
-	if (exists($self->{'Pool'}->{$newName}))
-		{ &{$Die}("Socket \"$newName\" already in use\n"); };
 
-	if (!$self->{'Select'}->add($newSock))
-		{
-		close($newSock);
-		$glErrorMsg = "Can not add ".$PRec->{'Proto'}." socket \"$newSock\" to select: $@.\n";
-		return;
-		};
-	
-	$self->{'Pool'}->{$newName} = &{$NewSRec}($self, $newSock, time(), %{$PRec});
+	my $newName = &{$AddSock}($self, scalar($PRec->{'Socket'}->accept()), $PRec)
+		or return;
+
+	$PRec->{'Clients'}++;
 	$self->{'Pool'}->{$newName}->{'Accept'}   = undef;
 	$self->{'Pool'}->{$newName}->{'SilenceT'} = $PRec->{'ClientsST'};
 	$self->{'Pool'}->{$newName}->{'Parent'}   = $PName;
 
-	$PRec->{'Clients'}++;
-
-	if (!(&{$PRec->{'Accept'}}($newName)))
+	if(!&{$PRec->{'Accept'}}($newName))
 		{
 		$self->{'Pool'}->{$newName}->{'Close'}++;
-		$glErrorMsg = "TCP socket external accept function return a FALSE value. Connection refused.\n";
+		$@ = "external accept function returned a FALSE value";
 		return;
 		};
 
-	return 1;
+	return $newName;
 	};
 
 my $Recv = sub($$$)
@@ -334,14 +339,14 @@ my $Recv = sub($$$)
 	
 	if (!defined($Res))
 		{
-		&{$FatalError}($self, $SName);
+		&{$EOF}($self, $SName, 'recv() fatal error');
 		return;
-		};
+		}
 	
 	if ($SRec->{'TCP'} && !length($Buf))
 		{
-		$SRec->{'EOF'}++;
-		return 0;
+		&{$EOF}($self, $SName, 'EOF');
+		return;
 		};
 
 	$SRec->{'ATime'}    = time();
@@ -361,9 +366,13 @@ my $Recv = sub($$$)
 	return length($Buf);
 	};
 
-sub IO($)
+sub IO($$)
 	{
-	my ($self) = @_;
+	my ($self, $ErrArray) = @_;
+
+	$ErrArray and @{$ErrArray} = ();
+
+	$self->{'ErrArray'} = $ErrArray;
 
 	my $CurTime = time();
 
@@ -375,48 +384,42 @@ sub IO($)
 
 	my $Socket = undef;
 
-	my @SockArray = $self->{'Select'}->can_read($self->{'SelectT'});
-	foreach $Socket (@SockArray)
-		{
-		$SName = &{$SockName}($self, $Socket);
-		$SRec  = $self->{'Pool'}->{$SName};
-
-	        if ($self->{'Pool'}->{$SName}->{'FatalError'})
-			{
-			carp("Socket \"$SName\" DEAD!\n");
-			next;
-			};
-
-		if ($SRec->{'EOF'} || $SRec->{'Close'} || $SRec->{'FatalError'})
-			{ next; };
-	
-		if (defined($SRec->{'Accept'}))
-			{
-			my $Res = &{$Accept}($self, $SName);
-			if (!defined($Res) && ($^W || $self->{'debug'}))
-				{ carp $glErrorMsg; }
-			elsif (($Res == 0) && $self->{'debug'})
-				{ carp "TCP socket \"$SName\" MaxClients (".$SRec->{'MaxClients'}.") exceeded. Incoming connection delayed.\n"; }
-			elsif (($Res  > 0) && $self->{'debug'})
-				{ carp "TCP socket \"$SName\" accepted incoming connection.\n"; };
-			$SRec->{'ATime'} = $CurTime;
-			next;
-			};
-	
-		my $Res = &{$Recv}($self, $SName, $CurTime);
-		if (!defined($Res))
-			{
-			if ($^W || $self->{'debug'})
-				{ carp $SRec->{'Proto'}." socket \"$SName\": EOF.\n"; };
-			next;
-			};
-
-		if ($self->{'debug'})
-			{ carp $SRec->{'Proto'}." socket \"$SName\" recv $Res bytes\n"; };
-
-		};
+	my @SockArray = ();
 
 	my $Continue = 1;
+	while ($Continue)
+		{
+		$Continue = 0;
+
+		@SockArray = $self->{'Select'}->can_read($self->{'SelectT'});
+		foreach $Socket (@SockArray)
+			{
+			$SName = &{$SockName}($self, $Socket);
+			$SRec  = $self->{'Pool'}->{$SName};
+	
+			if ($SRec->{'EOF'} || $SRec->{'Close'} ||
+			    (&{$BuffSize}($self, $SName, 'Input') >= $SRec->{'BuffSize'}))
+				{ next; };
+		
+			if ($SRec->{'Accept'} && $SRec->{'TCP'})
+				{
+				&{$Accept}($self, $SName)
+					and &{$ThrowMsg}(undef, $self->{'debug'}, "$SName: incoming connection accepted")
+					or  &{$ThrowMsg}($self, ($^W || $self->{'debug'}), "$SName: Can not accept incoming connection: $@");
+				$SRec->{'ATime'} = $CurTime;
+				next;
+				};
+		
+		        #$Continue = 1;
+
+			my ($Res) = &{$Recv}($self, $SName, $CurTime)
+				or next;
+	
+			&{$ThrowMsg}(undef, $self->{'debug'}, "$SName: recv $Res bytes");
+			};
+		};
+
+	$Continue = 1;
 	while ($Continue)
 		{
 		$Continue = 0;
@@ -430,8 +433,8 @@ sub IO($)
 
 			my $OutRec  = $SRec->{'Output'}->[0];
 
-			if   (!defined($OutRec) || $SRec->{'FatalError'})
-				{ next; }
+			(defined($OutRec) && !$SRec->{'EOF'})
+				or next;
 			
 			my $DataLen = length($OutRec->{'Data'});
 			
@@ -444,9 +447,7 @@ sub IO($)
 
 			if (!defined($Res))
 				{
-				if ($^W || $self->{'debug'})
-					{ carp $SRec->{'Proto'}." socket \"$SName\" send() return an UNDEF value.\n"; };
-				&{$FatalError}($self, $SName);
+				&{$EOF}($self, $SName, "send() fatal error");
 				next;
 				};
 
@@ -454,14 +455,14 @@ sub IO($)
 				{
 				if ($SRec->{'TCP'})
 					{
-					carp $SRec->{'Proto'}." socket \"$SName\": send() fatal error.\n";
-					&{$FatalError}($self, $SName);
+					&{$EOF}($self, $SName, "send() fatal error");
 					next;
 					};
 				
 				my ($DP, $DA) = unpack_sockaddr_in($OutRec->{'Dest'});
 				$DA = inet_ntoa($DA);
-				carp $SRec->{'Proto'}." socket \"$SName\": just $Res of $DataLen bytes sent to $DA:$DP due to send() error.\n";
+				$SRec->{'Error'} = "$SName: send() error: ".($DataLen - $Res)." bytes were not sent to $DA:$DP";
+				&{$ThrowMsg}($self, ($^W || $self->{'debug'}), $SRec->{'Error'});
 				
 				shift(@{$SRec->{'Output'}});
 				$SRec->{'BytesOut'} += $Res;
@@ -481,8 +482,7 @@ sub IO($)
 				&{$UpdatePeer}($SRec, $Socket);
 				};
 
-			if ($self->{'debug'})
-				{ carp $SRec->{'Proto'}." socket \"$SName\": $Res bytes sent to ".$SRec->{'PeerAddr'}.':'.$SRec->{'PeerPort'}.".\n"; };
+			&{$ThrowMsg}(undef, ($self->{'debug'}), "$SName: $Res bytes sent to ".$SRec->{'PeerAddr'}.':'.$SRec->{'PeerPort'});
 			};
 		};
 	return 1;
@@ -490,9 +490,9 @@ sub IO($)
 
 sub SelectT
 	{
-	my $Return = $_[0]->{'SelectT'};
-	if (defined($_[1]))
-		{ $_[0]->{'SelectT'} = $_[1]; };
+	my ($self, $SelectT) = @_;
+	my $Return = $self->{'SelectT'};
+	$SelectT and $self->{'SelectT'} = $SelectT;
 	return $Return;
 	};
 
@@ -500,98 +500,50 @@ sub Listen
 	{
 	my ($self, %Params) = @_;
 
-	if ($Params{'Proto'} =~ m/\A\s*tcp\s*\Z/io)
+	if (($Params{'Proto'} =~ m/\A\s*tcp\s*\Z/io) &&
+	    (ref($Params{'Accept'}) ne 'CODE'))
 		{
-		my $refType = ref($Params{'Accept'});
-	
-		if (!$refType)
-			{ $refType = 'undefined'; };
-
-		if ($refType ne 'CODE')
-			{
-			$@ = "Could not use $refType reference as a reference to external Accept routine";
-			return;
-			};
-		};
-	
-	my $newSock = &{$NonBlock}(IO::Socket::INET->new(%Params));
-
-	if (!defined($newSock))
-		{ return; };
-	
-	my $SName = &{$SockName}($self, $newSock);
-
-	if (exists($self->{'Pool'}->{$SName}))
-		{ &{$Die}("Socket \"$SName\" already in use\n"); };
-
-	if (!$self->{'Select'}->add($newSock))
-		{
-		close($newSock);
+		$@ = "'Accept' have to be a 'CODE' reference";
 		return;
 		};
+	
+	my $newName = &{$AddSock}($self, IO::Socket::INET->new(%Params), \%Params)
+		or return;
 
-	$self->{'Pool'}->{$SName} = &{$NewSRec}($self, $newSock, time(), %Params);
-
-	return $SName;
+	return $newName;
 	};
 
 sub Connect
 	{
 	my ($self, %Params) = @_;
 	
-	my $newSock = &{$NonBlock}(IO::Socket::INET->new(%Params));
+	my $newName = &{$AddSock}($self, IO::Socket::INET->new(%Params), \%Params)
+		or return;
 
-	if (!defined($newSock))
-		{ return; };
-	
-	my $SName = &{$SockName}($self, $newSock);
+	$self->{'Pool'}->{$newName}->{'Accept'} = undef;
 
-	if (exists($self->{'Pool'}->{$SName}))
-		{ &{$Die}("Socket \"$SName\" already in use\n"); };
-
-	if (!$self->{'Select'}->add($newSock))
-		{
-		close($newSock);
-		return;
-		};
-
-	$self->{'Pool'}->{$SName} = &{$NewSRec}($self, $newSock, time(), %Params);
-	$self->{'Pool'}->{$SName}->{'Accept'} = undef;
-
-	return $SName;
+	return $newName;
 	};
 
 sub Gets
 	{
 	my ($self, $SName, $MaxLen) = @_;
 
-	if (&{$IsDead}($_[0], $_[1]))
-		{
-		if ($^W || $self->{'debug'}) { carp "Socket \"".$_[1]."\" is not available.\n"; };
-		return;
-		};
-
-	if (&{$Eof}($_[0], $_[1]))
-		{
-		if ($self->{'debug'}) { carp "Socket \"".$_[1]."\": EOF.\n"; };
-		return;
-		};
+	&{$SockAvail}($self, $SName)
+		or return;
 
 	my $SRec = $self->{'Pool'}->{$SName};
 
-	if (!defined($MaxLen))
-		{ $MaxLen = $SRec->{'BuffSize'}; };
-	if ($MaxLen > 32766)
-		{
-		if ($^W || $self->{'debug'}) { carp "\$MaxLen parameter too big. Adjusted to 32766.\n"; };
-		$MaxLen = 32766;
-		};
+	$MaxLen or $MaxLen = $SRec->{'BuffSize'};
+
+	($MaxLen < 32767)
+		or $MaxLen =  32766;
 
 	$MaxLen--;
 
-	my @Result = ($SRec->{'Close'} ? () : ('', '', ''));
+	my @Result = ('', '', '');
 
-	if (defined($SRec->{'Input'}->[0]))
+	if ($SRec->{'Input'}->[0])
 		{
 		if (($SRec->{'Input'}->[0]->{'Data'} =~ s/\A(.{0,$MaxLen}\n)//m) ||
 		    ($SRec->{'Input'}->[0]->{'Data'} =~ s/\A(.{$MaxLen}.)//m   ))
@@ -600,6 +552,7 @@ sub Gets
 			$SRec->{'PeerPort'} = $SRec->{'Input'}->[0]->{'PeerPort'};
 			@Result = ($1, $SRec->{'PeerAddr'}, $SRec->{'PeerPort'});
 			};
+
 		if (!$SRec->{'TCP'} && 
 		    !length($SRec->{'Input'}->[0]->{'Data'}))
 			{
@@ -614,33 +567,21 @@ sub Read
 	{
 	my ($self, $SName, $MaxLen) = @_;
 
-	if (&{$IsDead}($_[0], $_[1]))
-		{
-		if ($^W || $self->{'debug'}) { carp "Socket \"".$_[1]."\" is not available.\n"; };
-		return;
-		};
-
-	if (&{$Eof}($_[0], $_[1]))
-		{
-		if ($self->{'debug'}) { carp "Socket \"".$_[1]."\": EOF.\n"; };
-		return;
-		};
+	&{$SockAvail}($self, $SName)
+		or return;
 
 	my $SRec = $self->{'Pool'}->{$SName};
 
-	if (!defined($MaxLen))
-		{ $MaxLen = $SRec->{'BuffSize'}; };
-	if ($MaxLen > 32766)
-		{
-		if ($^W || $self->{'debug'}) { carp "\$MaxLen parameter too big. Adjusted to 32766.\n"; };
-		$MaxLen = 32766;
-		};
+	$MaxLen or $MaxLen = $SRec->{'BuffSize'};
+
+	($MaxLen < 32767)
+		or $MaxLen =  32766;
 
 	$MaxLen--;
 
-	my @Result = ($SRec->{'Close'} ? () : ('', '', ''));
+	my @Result = ('', '', '');
 
-	if (defined($SRec->{'Input'}->[0]))
+	if ($SRec->{'Input'}->[0])
 		{
 		if (($SRec->{'Input'}->[0]->{'Data'} =~ s/\A(.{0,$MaxLen}\n)//m) ||
 		    ($SRec->{'Input'}->[0]->{'Data'} =~ s/\A(.{0,$MaxLen}.)//m ))
@@ -649,6 +590,7 @@ sub Read
 			$SRec->{'PeerPort'} = $SRec->{'Input'}->[0]->{'PeerPort'};
 			@Result = ($1, $SRec->{'PeerAddr'}, $SRec->{'PeerPort'});
 			};
+
 		if (!$SRec->{'TCP'} && 
 		    !length($SRec->{'Input'}->[0]->{'Data'}))
 			{
@@ -663,35 +605,22 @@ sub Recv
 	{
 	my ($self, $SName, $MaxLen) = @_;
 
-	if (&{$IsDead}($_[0], $_[1]))
-		{
-		if ($^W || $self->{'debug'}) { carp "Socket \"".$_[1]."\" is not available.\n"; };
-		return;
-		};
-
-	if (&{$Eof}($_[0], $_[1]))
-		{
-		if ($self->{'debug'}) { carp "Socket \"".$_[1]."\": EOF.\n"; };
-		return;
-		};
+	&{$SockAvail}($self, $SName)
+		or return;
 
 	my $SRec = $self->{'Pool'}->{$SName};
 
-	if (!defined($MaxLen))
-		{ $MaxLen = $SRec->{'BuffSize'}; };
+	$MaxLen or $MaxLen = $SRec->{'BuffSize'};
 	
-	my @Result = ($SRec->{'Close'} ? () : ('', '', ''));
+	my @Result = ('', '', '');
 
-	if (defined($SRec->{'Input'}->[0]))
+	if ($SRec->{'Input'}->[0])
 		{
-		my $OrigBufLen = length($SRec->{'Input'}->[0]->{'Data'});
 		$SRec->{'PeerAddr'} = $SRec->{'Input'}->[0]->{'PeerAddr'};
 		$SRec->{'PeerPort'} = $SRec->{'Input'}->[0]->{'PeerPort'};
 		@Result = (substr($SRec->{'Input'}->[0]->{'Data'}, 0, $MaxLen),
 		           $SRec->{'PeerAddr'}, $SRec->{'PeerPort'});
 		substr($SRec->{'Input'}->[0]->{'Data'}, 0, $MaxLen) = '';
-
-		if ($self->{'debug'}) { carp "Socket \"".$_[1].'": '.length($Result[0])." of $OrigBufLen bytes taken from input buffer by Recv.\n"; };
 
 		if (!$SRec->{'TCP'} && 
 		    !length($SRec->{'Input'}->[0]->{'Data'}))
@@ -707,38 +636,30 @@ sub Puts
 	{
 	my ($self, $SName, $Data, $PeerAddr, $PeerPort) = @_;
 
-	if (&{$IsDead}($_[0], $_[1]))
-		{
-		if ($^W || $self->{'debug'}) { carp "Socket \"".$_[1]."\" is not available.\n"; };
-		return;
-		};
+	&{$SockAvail}($self, $SName)
+		or return;
 
 	my $SRec = $self->{'Pool'}->{$SName};
 
-	if($SRec->{'Close'} || $SRec->{'EOF'})
-		{ return 1; };
-
 	if ($SRec->{'TCP'})
 		{
-		if (!defined($SRec->{'Output'}->[0]->{'Data'}))
-			{ $SRec->{'Output'}->[0]->{'Data'} = ''; };
+		defined($SRec->{'Output'}->[0]->{'Data'})
+			or $SRec->{'Output'}->[0]->{'Data'} = '';
 		$SRec->{'Output'}->[0]->{'Data'} .= $Data;
 		$SRec->{'Output'}->[0]->{'Dest'}  = undef;
 		}
 	else
 		{
-		if (!defined($PeerAddr))
-			{ $PeerAddr = $SRec->{'PeerAddr'}; };
-		if (!defined($PeerPort))
-			{ $PeerPort = $SRec->{'PeerPort'}; };
+		defined($PeerAddr)
+			or $PeerAddr = $SRec->{'PeerAddr'};
+		defined($PeerPort)
+			or $PeerPort = $SRec->{'PeerPort'};
 	
 	        my $PeerIP = inet_aton($PeerAddr);
 		my $Dest = pack_sockaddr_in($PeerPort, $PeerIP);
-		if (!(defined($PeerIP) && defined($Dest)))
-			{
-			carp "Socket \"".$_[1]."\": invalid destination address \"$PeerAddr:$PeerPort\".\n";
-			return;
-			};
+		(defined($PeerIP) && defined($Dest))
+			or  $@ = "$SName: invalid destination address '$PeerAddr:$PeerPort'"
+			and return;
 		push(@{$SRec->{'Output'}}, {'Data' => $Data, 'Dest' => $Dest});
 		};
 	return 1;
@@ -749,87 +670,93 @@ sub Send
 
 sub PeerAddr
 	{
-	if (&{$IsDead}($_[0], $_[1]))
-		{
-		if ($^W || $_[0]->{'debug'}) { carp "Socket \"".$_[1]."\" is not available.\n"; };
-		return;
-		};
-	return $_[0]->{'Pool'}->{$_[1]}->{'PeerAddr'};
+	my ($self, $SName) = @_;
+	&{$SockAvail}($self, $SName)
+		or return;
+	return $self->{'Pool'}->{$SName}->{'PeerAddr'};
 	};
 
 sub PeerPort
 	{
-	if (&{$IsDead}($_[0], $_[1]))
-		{
-		if ($^W || $_[0]->{'debug'}) { carp "Socket \"".$_[1]."\" is not available.\n"; };
-		return;
-		};
-	return $_[0]->{'Pool'}->{$_[1]}->{'PeerPort'};
+	my ($self, $SName) = @_;
+	&{$SockAvail}($self, $SName)
+		or return;
+	return $self->{'Pool'}->{$SName}->{'PeerPort'};
 	};
 
 sub LocalAddr
 	{
-	if (&{$IsDead}($_[0], $_[1]))
-		{
-		if ($^W || $_[0]->{'debug'}) { carp "Socket \"".$_[1]."\" is not available.\n"; };
-		return;
-		};
-	return $_[0]->{'Pool'}->{$_[1]}->{'LocalAddr'};
+	my ($self, $SName) = @_;
+	&{$SockAvail}($self, $SName)
+		or return;
+	return $self->{'Pool'}->{$SName}->{'LocalAddr'};
 	};
 
 sub LocalPort
 	{
-	if (&{$IsDead}($_[0], $_[1]))
-		{
-		if ($^W || $_[0]->{'debug'}) { carp "Socket \"".$_[1]."\" is not available.\n"; };
-		return;
-		};
-	return $_[0]->{'Pool'}->{$_[1]}->{'LocalPort'};
+	my ($self, $SName) = @_;
+	&{$SockAvail}($self, $SName)
+		or return;
+	return $self->{'Pool'}->{$SName}->{'LocalPort'};
 	};
 
 sub Handle
 	{
-	if (&{$IsDead}($_[0], $_[1]))
+	my ($self, $SName) = @_;
+	&{$SockAvail}($self, $SName)
+		or return;
+	return $self->{'Pool'}->{$SName}->{'Socket'};
+	};
+
+sub NestProperties
+	{
+	my ($self, %Params) = @_;
+
+	my %Result = ();
+
+	my $Key = undef;
+	foreach $Key ('SelectT', 'SilenceT', 'BuffSize', 'debug')
+		{ $Result{$Key} = defined($self->{$Key}) ? $self->{$Key} : ''; };
+
+	$Result{'Sockets'} = $self->{'Select'}->count();
+
+	foreach $Key ('SelectT', 'SilenceT', 'BuffSize', 'debug')
 		{
-		if ($^W || $_[0]->{'debug'}) { carp "Socket \"".$_[1]."\" is not available.\n"; };
-		return;
+		defined($Params{$Key})
+			and $self->{$Key} = $Params{$Key};
 		};
-	return $_[0]->{'Pool'}->{$_[1]}->{'Socket'};
+
+	return wantarray ? %Result : \%Result;
 	};
 
 sub Properties
 	{
 	my ($self, $SName, %Params) = @_;
 
-	if (&{$IsDead}($_[0], $_[1]))
-		{
-		if ($^W || $_[0]->{'debug'}) { carp "Socket \"".$_[1]."\" is not available.\n"; };
-		return;
-		};
+	&{$SockAvail}($self, $SName)
+		or return;
 
 	my %Result = ();
 
 	my $SRec = $self->{'Pool'}->{$SName};
 
 	$Result{'Handle'} = $SRec->{'Socket'};
-	foreach ('Socket', 'SilenceT', 'BuffSize', 'MaxClients',
-	         'ClientsST', 'Clients','MCReached', 'Parent', 'BytesIn',
-	         'BytesOut', 'CTime', 'ATime', 'Proto', 'Accept',
-	         'PeerAddr', 'PeerPort', 'LocalAddr', 'LocalPort')
-		{
-		$Result{$_} = $SRec->{$_}
-			or $Result{$_} = '';
-		};
 
-	foreach ('Input', 'Output')
-		{
-		$Result{$_} = &{$BuffSize}($self, $SName, $_);
-		};
+	my $Key = undef;
+	foreach $Key ('Socket',    'SilenceT',  'BuffSize',  'MaxClients',
+	              'ClientsST', 'Clients',   'Parent',
+	              'BytesOut',  'CTime',     'ATime',     'Proto',
+                      'BytesIn',   'Accept',    'PeerAddr',  'PeerPort',
+                      'LocalAddr', 'LocalPort', 'Error')
+                { $Result{$Key} = defined($SRec->{$Key}) ? $SRec->{$Key} : ''; };
 
-	foreach ('SilenceT', 'BuffSize', 'MaxClients', 'ClientsST', 'ATime', 'Accept')
+	foreach $Key ('Input', 'Output')
+		{ $Result{$Key} = &{$BuffSize}($self, $SName, $Key); };
+
+	foreach $Key ('SilenceT', 'BuffSize', 'MaxClients', 'ClientsST', 'ATime', 'Accept')
 		{
-		if (defined($Params{$_}) && defined($SRec->{$_}))
-			{ $SRec->{$_} = $Params{$_}; };
+		(defined($Params{$Key}) && defined($SRec->{$Key}))
+			and $SRec->{$Key} = $Params{$Key};
 		};
 
 	return wantarray ? %Result : \%Result;
@@ -837,22 +764,16 @@ sub Properties
 
 sub Close
 	{
-	if (!defined($_[0]->{'Pool'}->{$_[1]}))
-		{
-		if ($^W || $_[0]->{'debug'}) { carp "Socket \"".$_[1]."\" is not available.\n"; };
-		return;
-		};
+	my ($self, $SName, $Flush, $Timeout) = @_;
 
-	$_[0]->{'Pool'}->{$_[1]}->{'Close'}++;
+	$self->{'Pool'}->{$SName}
+		or return;
+
+	$self->{'Pool'}->{$SName}->{'Close'}++;
+	$self->{'Pool'}->{$SName}->{'Flush'} = (1 && $Flush);
+	($Flush && $Timeout)
+		and $self->{'Pool'}->{$SName}->{'CloseAt'} = time() + $Timeout;
 	return;
-	};
-
-sub SafeStr($)
-	{
-	my $Str = shift
-		or return '!UNDEF!';
-	$Str =~ s{ ([\x00-\x1f\xff\\]) } { sprintf("\\x%2.2X", ord($1)) }gsex;
-	return $Str;
 	};
 
 1;
@@ -864,7 +785,7 @@ __END__
 Net::Socket::NonBlock - Perl extension for easy creation multi-socket single-thread application,
 especially non-forking TCP servers
 
-I<Version 0.04>
+I<Version 0.06>
 
 =head1 SYNOPSIS
 
@@ -894,7 +815,7 @@ I<Version 0.04>
                     SilenceT  => 0,
                     #ClientsST => 10,
                     Listen    => 10,)
-  	or die "Could not listen on port \"$LocalPort\": $@\n";
+  	or die "Could not listen on port '$LocalPort': $@\n";
   
   my %ConPool = ();
 
@@ -946,13 +867,21 @@ I<Version 0.04>
   	$ConPool{$ClnSock} = $SockNest->Connect(PeerAddr => $RemoteHost, Proto => 'tcp',);
   	if(!$ConPool{$ClnSock})
   		{
-  		warn "Can not connect to \"$RemoteHost\": $@\n";
+  		warn "Can not connect to '$RemoteHost': $@\n";
   		$SockNest->Close($ClnSock);
   		delete($ConPool{$ClnSock});
   		return;
   		};
   	return 1;
   	};
+
+  sub SafeStr($)
+	{
+	my $Str = shift
+		or return '!UNDEF!';
+	$Str =~ s{ ([\x00-\x1f\xff\\]) } { sprintf("\\x%2.2X", ord($1)) }gsex;
+	return $Str;
+	};
 
 =head1 DESCRIPTION
 
@@ -1021,11 +950,64 @@ If true, additional debug info will be printed during program execution.
 
 =back
 
-=item C<IO();>
+=item C<NestProperties([%PARAMHASH]);>
+
+The C<NestProperties> method returns the hash in list context
+or pointer to the hash in scalar context.
+Hash itself is containing nest properties which are:
+
+=over 4
+
+=item Z<>
+
+=over 4
+
+=item C<Sockets>
+
+The number of sockets currently active on this nest.
+
+=item C<SelectT>
+
+=item C<SilenceT>
+
+=item C<BuffSize>
+
+=item C<debug>
+
+See C<new()> for detailed explanation.
+
+=back
+
+=back
+
+The following parameters could be changed if new value will be provided in the I<C<%PARAMHASH>>:
+
+=over 4
+
+=item Z<>
+
+=over 4
+
+=item C<SelectT>
+
+=item C<SilenceT>
+
+=item C<BuffSize>
+
+=item C<debug>
+
+=back
+
+=back
+
+=item C<IO([$Errors]);>
 
 The most important method :) This method performs actual socket input-output,
 accept incoming connection, close sockets, etc.
 You have to call it periodically, as frequently as possible.
+
+I<C<$Errors>> could be a reference to the array. After the C<IO()> call this array will
+conatin the messages for errors ocured during the call. Note: C<IO()> cleans this array every time.
 
 C<IO> always returns 1.
 
@@ -1099,8 +1081,8 @@ The I<Proto> key is required.
 
 C<Connect()> method returns the I<C<SocketID>>, the symbolic name 
 which have to be used for work with particular socket in nest using C<Gets()>, C<Puts()>,
-C<Recv()> and C<Properties()> methods. In case of problems C<Connect()> returns I<C<undef>> value.
-I<C<$@>> will contain a error message.
+C<Recv()> and C<Properties()> methods. In case of problems C<Connect()> returns an I<C<undef>> value.
+I<C<$@>> will contain an error message.
 
 =item I<Important note>
 
@@ -1129,7 +1111,8 @@ It will be adjusted automaticaly otherwise.
 
 If no data available for reading, C<Gets> returns empty string.
 
-If socket closed or I<C<$SocketID>> is invalid C<Gets> returns I<C<undef>>.
+If socket closed or I<C<$SocketID>> is invalid C<Gets> returns an I<C<undef>> value.
+I<C<$@>> will contain an error message.
 
 In list context method returns an array of 3 elements:
 [0] - string as in scalar context
@@ -1156,7 +1139,8 @@ Default I<C<$MaxLength>> is socket I<C<BiffSize>>.
 
 If no data available for reading, C<Recv> returns empty string.
 
-If socket is closed or I<C<$SocketID>> is invalid C<Recv> returns I<C<undef>>.
+If socket is closed or I<C<$SocketID>> is invalid C<Recv> returns an I<C<undef>> value.
+I<C<$@>> will contain an error message.
 
 In list context method returns an array of 3 elements:
 [0] - string as in scalar context
@@ -1168,13 +1152,16 @@ C<IO> method.
 
 =item C<Read($SocketID, [$MaxLength]);>
 
-This method is little bit eclectic but I found it's useful.
+This method is little bit eclectic but I found it useful.
 
 If string I<C<"\n">> is presented in the buffer this method will act as C<Gets> method.
 Otherwise it will act as C<Recv>.
 
 I<C<$MaxLength>> for C<Read> have to be no more than C<32766>.
 It will be adjusted automaticaly otherwise.
+
+If socket is closed or I<C<$SocketID>> is invalid C<Recv> returns an I<C<undef>> value.
+I<C<$@>> will contain an error message.
 
 =item C<Puts($SocketID, $Data, $PeerAddr, $PeerPort);>
 
@@ -1184,7 +1171,8 @@ I<C<$PeerAddr:$PeerPort>> pair is the destination which I<C<$Data>> must be sent
 If not specified these fields will be taken from socket properties.
 I<C<$PeerAddr:$PeerPort>> will be ignored on TCP sockets.
 
-If socket closed or I<C<$SocketID>> is invalid C<Recv> returns I<C<undef>>.
+If socket is closed or I<C<$SocketID>> is invalid C<Recv> returns an I<C<undef>> value.
+I<C<$@>> will contain an error message.
 Otherwise it returns 1.
 
 Note: C<Puts> is not writing data directly to the socket but puts it to the special buffer
@@ -1202,7 +1190,8 @@ empty string for listening sockets.
 For non-TCP sockets the C<PeerAddr> method returns the IP address which was used for sending 
 last time or IP address which is corresponding to data read by last C<Gets> or C<Recv> call.
 
-If socket closed or I<C<$SocketID>> is invalid C<PeerAddr> returns I<C<undef>>.
+If socket is closed or I<C<$SocketID>> is invalid C<Recv> returns an I<C<undef>> value.
+I<C<$@>> will contain an error message.
 
 =item C<PeerPort($SocketID);>
 
@@ -1213,7 +1202,8 @@ I<C<undef>>
 For non-TCP sockets the C<PeerPort> method returns the port which was used for sending 
 last time or port which is corresponding to data read by last C<Gets> or C<Recv> call.
 
-If socket closed or I<C<$SocketID>> is invalid C<PeerPort> returns I<C<undef>>.
+If socket is closed or I<C<$SocketID>> is invalid C<Recv> returns an I<C<undef>> value.
+I<C<$@>> will contain an error message.
 
 =item C<LocalAddr($SocketID);>
 
@@ -1225,7 +1215,8 @@ If socket closed or I<C<$SocketID>> is invalid C<LocalAddr> returns I<C<undef>>.
 
 The C<LocalPort> method returns the IP address for this end of the socket connection.
 
-If socket closed or I<C<$SocketID>> is invalid C<LocalPort> returns I<C<undef>>.
+If socket is closed or I<C<$SocketID>> is invalid C<Recv> returns an I<C<undef>> value.
+I<C<$@>> will contain an error message.
 
 =item C<Handle($SocketID);>
 
@@ -1324,6 +1315,11 @@ Read-only.
 
 The size of buffer for C<IO::Socket::INET-E<gt>recv> function.
 
+=item C<Error>
+
+The message for last error ocured on this socket during last C<IO> call.
+Or just an empty string if no errors.
+
 =back
 
 =back
@@ -1353,27 +1349,31 @@ The following parameters could be changed if new value will be provided in the I
 I<It is useless to set C<MaxClients> or C<ClientsST> or C<Accept> 
 for any sockets except TCP listening sockets>
 
+If socket is closed or I<C<$SocketID>> is invalid C<Recv> returns an I<C<undef>> value.
+I<C<$@>> will contain an error message.
+
 =back
 
-=item C<Close($SocketID);>
+=item C<Close($SocketID [, $Flush [, $Timeout]]);>
 
 Put the "close" request for the socket I<C<$SocketID>>.
 The actual removing will be done by C<IO> method during next call.
 
-Remember: it is important to call C<Close> for all socket which have to be removed
-even they become to be unavailable because of I<C<send()>> or I<C<recv()>> error.
+I<C<$Flush>> is a boolean parameter which tells C<IO> method to flush the output buffer
+before close the socket.
 
-=item C<SafeStr($Str);>
+I<C<$Timeout>> is an amount of seconds after that the socket will be closed
+even it still have some data in the output buffer.
 
-Just change all dangerous symbols (C<\x00-\x1F> and C<\xFF>) in a string to their
-hexadecimal codes and returns the updated string. Nothing relative to sockets but
-can be very usefull for logging pourposes
+B<Remember: it is important to call C<Close> for all socket which have to be removed
+even they become to be unavailable because of I<C<send()>> or I<C<recv()>> error
+or silence timeout.>
 
 =back
 
 =head2 EXPORT
 
-C<SafeStr>
+None.
 
 =head1 AUTHOR
 

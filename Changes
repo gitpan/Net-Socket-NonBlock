@@ -1,15 +1,33 @@
 Revision history for Perl extension Net::Socket::NonBlock.
 
+0.06  Tue Sep 24 19:00:00 2002
+ 	- Close($SocketID [, $Flush [, $Timeout]]) syntax introduced
+ 	- IO([$Errors]) syntax introduced
+        - SafeStr function removed from the module.
+          You can obtain the sources for this function
+          from the SYNOPSIS section of documentation.
+        - The way how the SilenceT working is changed.
+          It is necessary now to call the Close function
+          for the sockets which become unavailable
+          because of silence timeout.
+ 	- Minor bugfixes
+ 	- Minor changes in debug messages printing
+ 	- Minor documentation changes
+        - Minor changess in test.pl
+
+0.05  Fri Jul 19 17:00:00 2002
+ 	- Minor bugfixes
+ 	- 'NestProperties' method introduced
+
 0.04  Sat Jul  6 23:00:00 2002
  	- Serious bugfixes
- 	- InstantDeth parameter removed
- 	- debug parameter added
+ 	- 'InstantDeth' parameter removed
+ 	- 'debug' parameter introduced
  	- The example updated
 
 0.03  Wed Jun 24 23:40:00 2002
 	- SafeStr not exported by default any more
-	- Parameter MaxClients added.
-	   You can limit a number of simultaneous incoming TCP connections
+	- 'MaxClients' parameter for 'Listen' method introduced
 
 0.02  Tue Jun 19 10:00:00 2002
 	- first public release
