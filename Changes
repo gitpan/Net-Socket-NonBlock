@@ -1,6 +1,11 @@
 Revision history for Perl extension Net::Socket::NonBlock.
 
-0.02  Fri Apr 26 17:43:45 2002
+0.03  Wed Jun 24 23:40:00 2002
+	- SafeStr not exported by default any more
+	- Parameter MaxClients added.
+	   You can limit a number of simultaneous incoming TCP connections
+
+0.02  Tue Jun 19 10:00:00 2002
 	- first public release
 
 0.01  Fri Apr 26 17:43:45 2002

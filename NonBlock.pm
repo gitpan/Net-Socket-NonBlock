@@ -17,17 +17,25 @@ require Exporter;
 # This allows declaration	use Net::Socket::NonBlock ':all';
 # If you do not need this, moving things directly into @EXPORT or @EXPORT_OK
 # will save memory.
-%EXPORT_TAGS = ( 'all' => [ qw(
-	
-) ] );
+		
+
+%EXPORT_TAGS = ('functions'  => [qw(SafeStr)],
+               );
+
+foreach (keys(%EXPORT_TAGS))
+	{
+	if ($_ eq 'all')
+		{ next; };
+	push(@{$EXPORT_TAGS{'all'}}, @{$EXPORT_TAGS{$_}});
+	};
+
 
 @EXPORT_OK = ( @{ $EXPORT_TAGS{'all'} } );
 
-@EXPORT = qw(&SafeStr
-	
+@EXPORT = qw(
 );
 
-$VERSION = '0.02';
+$VERSION = '0.03';
 
 use IO::Socket;
 use IO::Select;
@@ -43,12 +51,13 @@ sub new($%)
 	my $Select = IO::Select->new()
 		or return;
 
-	return bless {'Select'    => IO::Select->new(),
-		      'Pool'      => {},
-		      'SelectT'   => (defined($Params{'SelectT'})   ? $Params{'SelectT'}   : 0.05),
-		      'SilenceT'  => (defined($Params{'SilenceT'})  ? $Params{'SilenceT'}  : 3600),
-                      'BuffSize'  => (defined($Params{'BuffSize'})  ? $Params{'BuffSize'}  : POSIX::BUFSIZ),
-                      'InstDeath' => (defined($Params{'InstDeath'}) ? $Params{'InstDeath'} : 0), } => $class;
+	return bless {'Select'     => IO::Select->new(),
+		      'Pool'       => {},
+		      'SelectT'    => (defined($Params{'SelectT'})    ? $Params{'SelectT'}    : 0.05),
+		      'SilenceT'   => (defined($Params{'SilenceT'})   ? $Params{'SilenceT'}   : 0),
+                      'BuffSize'   => (defined($Params{'BuffSize'})   ? $Params{'BuffSize'}   : POSIX::BUFSIZ),
+                      'MaxClients' => (defined($Params{'MaxClients'}) ? $Params{'MaxClients'} : 9999999999),
+                      'InstDeath'  => (defined($Params{'InstDeath'})  ? $Params{'InstDeath'}  : 0), } => $class;
 	};
 
 my $NonBlock = sub($)
@@ -87,9 +96,9 @@ my $SockName = sub($$)
 	return $newName;
 	};
 
-my $NewSRec = sub($$%)
+my $NewSRec = sub($$$%)
 	{
-	my ($self, $newSock, %Params) = @_;
+	my ($self, $newSock, $Parent, %Params) = @_;
 
 	my $CurTime = time();
 	
@@ -97,21 +106,26 @@ my $NewSRec = sub($$%)
 	$Proto = "\U$Proto";
 	$Proto =~ s/\A\s+//;
 	$Proto =~ s/\s+\Z//;
-	my $SRec = {'Socket'    => $newSock,
-		    'SilenceT'  => (defined($Params{'SilenceT'})  ? $Params{'SilenceT'}  : $self->{'SilenceT'}),
-                    'BuffSize'  => (defined($Params{'BuffSize'})  ? $Params{'BuffSize'}  : $self->{'BuffSize'}),
-                    'InstDeath' => (defined($Params{'InstDeath'}) ? $Params{'InstDeath'} : $self->{'InstDeath'}),
-	            'BytesIn'   => 0,
-	            'BytesOut'  => 0,
-	            'CTime'     => $CurTime,
-	            'ATime'     => $CurTime,
-	            'Proto'     => $Proto,
-	            'TCP'       => (($Proto eq 'TCP') ? 1 : 0),
-	            'Accept'    => $Params{'Accept'},
-	            'PeerAddr'  => '',
-	            'PeerPort'  => '',
-	            'LocalAddr' => '',
-	            'LocalPort' => '',
+	my $SRec = {'Socket'     => $newSock,
+		    'SilenceT'   => (defined($Params{'SilenceT'})   ? $Params{'SilenceT'}   : $self->{'SilenceT'}),
+                    'BuffSize'   => (defined($Params{'BuffSize'})   ? $Params{'BuffSize'}   : $self->{'BuffSize'}),
+                    'MaxClients' => (defined($Params{'MaxClients'}) ? $Params{'MaxClients'} : $self->{'MaxClients'}),
+                    'ClientsST'  => (defined($Params{'ClientsST'})  ? $Params{'ClientsST'}  : $self->{'SilenceT'}),
+                    'Clients'    => 0,
+                    'MCReached'  => 0,
+	            'Parent'     => $Parent,
+                    'InstDeath'  => (defined($Params{'InstDeath'})  ? $Params{'InstDeath'}  : $self->{'InstDeath'}),
+	            'BytesIn'    => 0,
+	            'BytesOut'   => 0,
+	            'CTime'      => $CurTime,
+	            'ATime'      => $CurTime,
+	            'Proto'      => $Proto,
+	            'TCP'        => (($Proto eq 'TCP') ? 1 : 0),
+	            'Accept'     => $Params{'Accept'},
+	            'PeerAddr'   => '',
+	            'PeerPort'   => '',
+	            'LocalAddr'  => '',
+	            'LocalPort'  => '',
 	           };
 
 	&{$UpdatePeer}($SRec, $newSock);
@@ -144,11 +158,21 @@ my $IsDead = sub($$)
 
 my $Close = sub($$)
 	{
-	if (!defined($_[0]->{'Pool'}->{$_[1]}))
+	my ($self, $SName) = @_;
+
+	if (!defined($self->{'Pool'}->{$SName}))
 		{ return; };
-	$_[0]->{'Select'}->remove($_[0]->{'Pool'}->{$_[1]}->{'Socket'});
-	close($_[0]->{'Pool'}->{$_[1]}->{'Socket'});
-	delete($_[0]->{'Pool'}->{$_[1]});
+	
+	$self->{'Select'}->remove($self->{'Pool'}->{$SName}->{'Socket'});
+
+	if (defined($self->{'Pool'}->{$SName}->{'Parent'}))
+		{
+		$self->{'Pool'}->{$self->{'Pool'}->{$SName}->{'Parent'}}->{'MCReached'} = 0;
+		$self->{'Pool'}->{$self->{'Pool'}->{$SName}->{'Parent'}}->{'Clients'}--;
+		};
+	
+	close($self->{'Pool'}->{$SName}->{'Socket'});
+	delete($self->{'Pool'}->{$SName});
 	return;
 	};
 
@@ -240,7 +264,8 @@ sub IO($)
 			my $Msg =$SRec->{'Proto'}." socket \"$SName\" closed by silence timeout.\n";
 			if ($^W) { carp $Msg; };
 			$@ .= $Msg;
-			&{$Close}($self, $SName);
+			#&{$Close}($self, $SName);
+			$SRec->{'Close'}++;
 			next;
 			};
 		};
@@ -261,10 +286,20 @@ sub IO($)
 			    $SRec->{'FatalError'})
 				{ next; };
 	
-			$Continue++;
-
 			if (defined($SRec->{'Accept'}))
 				{
+				if ($SRec->{'Clients'} >= $SRec->{'MaxClients'})
+					{
+					if (!$SRec->{'MCReached'})
+						{
+						$SRec->{'MCReached'}++;
+						if ($^W) { carp "Socket \"$SName\" MaxClients (".$SRec->{'MaxClients'}.") exceeded. Incoming connection delayed.\n"; };
+						};
+					next;
+					};
+
+				$Continue++;
+
 				my $newSock = &{$NonBlock}($Socket->accept());
 	
 				if (!defined($newSock))
@@ -282,9 +317,12 @@ sub IO($)
 					next;
 					};
 	
-				$self->{'Pool'}->{$newName} = &{$NewSRec}($self, $newSock, %{$SRec});
-				$self->{'Pool'}->{$newName}->{'Accept'} = undef;
-				
+				$self->{'Pool'}->{$newName} = &{$NewSRec}($self, $newSock, $SName, %{$SRec});
+				$self->{'Pool'}->{$newName}->{'Accept'}   = undef;
+				$self->{'Pool'}->{$newName}->{'SilenceT'} = $self->{'ClientsST'};
+
+				$SRec->{'Clients'}++;
+
 				if (!(&{$SRec->{'Accept'}}($newName)))
 					{
 					&{$Close}($self, $newName);
@@ -295,6 +333,8 @@ sub IO($)
 				next;
 				};
 	
+			$Continue++;
+
 			my $Buf = '';
 			my $Res = $Socket->recv($Buf, $SRec->{'BuffSize'}, 0);
 			
@@ -439,7 +479,7 @@ sub Listen
 
 	my $SName = &{$SockName}($self, $newSock);
 
-	$self->{'Pool'}->{$SName} = &{$NewSRec}($self, $newSock, %Params);
+	$self->{'Pool'}->{$SName} = &{$NewSRec}($self, $newSock, undef, %Params);
 
 	return $SName;
 	};
@@ -461,7 +501,7 @@ sub Connect
 
 	my $SName = &{$SockName}($self, $newSock);
 
-	$self->{'Pool'}->{$SName} = &{$NewSRec}($self, $newSock, %Params);
+	$self->{'Pool'}->{$SName} = &{$NewSRec}($self, $newSock, undef, %Params);
 	$self->{'Pool'}->{$SName}->{'Accept'} = undef;
 
 	return $SName;
@@ -716,7 +756,7 @@ sub Properties
 	my $SRec = $self->{'Pool'}->{$SName};
 
 	$Result{'Handle'} = $SRec->{'Socket'};
-	foreach ('BytesIn', 'BytesOut', 'CTime', 'ATime', 'PeerAddr', 'PeerPort', 'LocalAddr', 'LocalPort', 'SilenceT', 'BuffSize', 'Accept', 'InstDeath')
+	foreach ('BytesIn', 'BytesOut', 'CTime', 'ATime', 'PeerAddr', 'PeerPort', 'LocalAddr', 'LocalPort', 'SilenceT', 'BuffSize', 'Clients', 'MaxClients', 'Accept', 'InstDeath')
 		{
 		$Result{$_} = $SRec->{$_};
 		};
@@ -725,7 +765,7 @@ sub Properties
 		$Result{$_} = &{$BuffSize}($self, $SName, $_);
 		};
 
-	foreach ('SilenceT', 'BuffSize', 'Accept', 'InstDeath')
+	foreach ('SilenceT', 'BuffSize', 'MaxClients', 'Accept', 'InstDeath')
 		{
 		if (defined($Params{$_}) && defined($SRec->{$_}))
 			{ $SRec->{$_} = $Params{$_}; };
@@ -890,7 +930,7 @@ Default is 0.1 second.
 =item C<SilenceT>
 
 If no data was transferred trough socket for C<SilenceT> seconds
-the socket will be closed. Default is 3600 seconds (1 hour). 
+the socket will be closed. Default is '0'. 
 If C<SilenceT = 0> socket will nether been closed by timeout.
 
 This value is the default for all sockets created by C<Listen> or C<Connect> method
@@ -948,31 +988,63 @@ provided value and returns a previous one.
 
 The C<Listen> method create new socket listening on I<C<LocalAddr:LocalPort>>.
 
-The C<Listen> take the same list of arguments as C<IO::Socket::INET-E<gt>new>.
-The I<Proto> key is required. If I<Proto = 'tcp'> the I<C<Accept>> key is also required.
-The C<Accept> key must contain the pointer to the external accept function provided by you.
+The C<Listen> take the same list of arguments as C<IO::Socket::INET-E<gt>new()>
+with some additions:
+
+=over 4
+
+=item Z<>
+
+=over 4
+
+=item C<SilenceT>
+
+Silence timeout. See C<new()> for details.
+
+=item C<Accept>
+
+Contains the pointer to the external accept function provided by you.
 
 When the new connection will be detected by listening TCP socket the new socket will be created by
-C<IO::Socket::INET-E<gt>accept> function. After that the external I<C<Accept>> function
+C<IO::Socket::INET-E<gt>accept()>. After that the external I<C<Accept>> function
 will be called with just one parameter: the ID for the new socket.
+
 External I<C<Accept>> have to return I<C<true>> value otherwise new socket
 will be closed and connection will be rejected.
 
-C<Listen> method returns the I<C<SocketID>>, the symbolic name 
-which have to be used for work with particular socket in nest using C<Gets>, C<Puts>,
-C<Recv> and C<Properties> methods. In case of problems C<Listen> returns I<C<undef>> value.
-I<C<$@>> will contain a error message.
+=item C<MaxClients>
+
+The maximum number of simultaneous incoming connections.
+
+If current number of children of this listening socket 
+is bigger than C<MaxClients> new connections are not accepted.
+
+C<'0'> mean 'do not accept new connections'.
+The default is '9999999999' which is quite close to unlimited.
+
+=item C<ClientsST>
+
+The silence timeout for children sockets. Default is the nest C<SilenceT>.
+
+=item C<InstDeath>
+
+The C<InstDeath> flag. See C<new()> for details.
+
+=back
+
+=back
 
 =item C<Connect(%PARAMHASH);>
 
-The C<Connect> method create new socket connected to I<C<PeerAddr:PeerPort>>.
+The C<Connect()> method create new socket connected to I<C<PeerAddr:PeerPort>>.
 
-The C<Connect> take the same list of arguments as C<IO::Socket::INET-E<gt>new>.
+The C<Connect()> take the same list of arguments as C<IO::Socket::INET-E<gt>new()>
+with same additions as C<Listen()>.
 The I<Proto> key is required.
 
-C<Connect> method returns the I<C<SocketID>>, the symbolic name 
-which have to be used for work with particular socket in nest using C<Gets>, C<Puts>,
-C<Recv> and C<Properties> methods. In case of problems C<Connect> returns I<C<undef>> value.
+C<Connect()> method returns the I<C<SocketID>>, the symbolic name 
+which have to be used for work with particular socket in nest using C<Gets()>, C<Puts()>,
+C<Recv()> and C<Properties()> methods. In case of problems C<Connect()> returns I<C<undef>> value.
 I<C<$@>> will contain a error message.
 
 =item I<Important note>
@@ -1165,6 +1237,20 @@ The value is the same as returned by C<LocalPort> method. Read-only.
 If no data was sent to or received from socket for I<C<SilenceT>> the socket
 will be closed.
 
+=item C<ClientsST>
+
+TCP listening sockets only. The C<SilenceT> parameter of children
+sockets will be set to C<ClientsST> of parent. See C<Listen> for details.
+
+=item C<Clients>
+
+TCP listening sockets only. Contains the number of child sockets active at the moment.
+Read-only.
+
+=item C<MaxClients>
+
+TCP listening sockets only. The maximum number of child sockets. See C<Listen> for details.
+
 =item C<BuffSize>
 
 The size of buffer for C<IO::Socket::INET-E<gt>recv> function.
@@ -1193,13 +1279,18 @@ The following parameters could be changed if new value will be provided in the I
 
 =item C<BuffSize>
 
+=item C<MaxClients>
+
 =item C<InstDeath>
 
 =item C<Accept>
 
-Note: you will be able to set C<Accept> property only for TCP listening sockets.
+=item C<ClientsST>
 
 =back
+
+Note: you will be able to set C<Accept> and C<MaxClients> properties
+only for TCP listening sockets.
 
 =back
 
@@ -1210,8 +1301,6 @@ The actual removing will be done by C<IO> method during next call.
 
 Remember: it is important to call C<Close> for all socket which have to be removed
 even they become to be unavailable because of I<C<send()>> or I<C<recv()>> error.
-
-=back
 
 =item C<SafeStr($Str);>
 
