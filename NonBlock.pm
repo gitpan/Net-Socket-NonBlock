@@ -21,7 +21,7 @@ $EXPORT_TAGS{'all'}
 @EXPORT = qw(
 );
 
-$VERSION = '0.14';
+$VERSION = '0.15';
 
 use Carp;
 use IO::Select;
@@ -130,24 +130,22 @@ my $EOF = sub($$$)
 
 sub Gets
 	{
-	my ($SRec, $MaxLen) = @_;
+	my ($SRec, $BufLen) = @_;
 
 	&{$SockAvail}($SRec)
 		or return;
 
-	$MaxLen or $MaxLen = $SRec->{'BuffSize'};
+	($BufLen && $BufLen > 0 && $BufLen < 32767 && $BufLen < $SRec->{'BuffSize'})
+		or $BufLen = ($SRec->{'BuffSize'} < 32767) ? $SRec->{'BuffSize'} : 32766;
 
-	(($MaxLen > 0) && ($MaxLen < 32767))
-		or $MaxLen =  32766;
-
-	$MaxLen--;
+	$BufLen--;
 
 	my @Result = ('', '', '');
 
 	if ($SRec->{'Input'}->[0])
 		{
-		if (($SRec->{'Input'}->[0]->{'Data'} =~ s/\A(.{0,$MaxLen}\n)//m) ||
-		    ($SRec->{'Input'}->[0]->{'Data'} =~ s/\A(.{$MaxLen}.)//m   ) ||
+		if (($SRec->{'Input'}->[0]->{'Data'} =~ s/\A(.{0,$BufLen}\n)//m) ||
+		    ($SRec->{'Input'}->[0]->{'Data'} =~ s/\A(.{$BufLen}.)//m   ) ||
 		    ($SRec->{'EOF'} && ($SRec->{'Input'}->[0]->{'Data'} =~ s/\A([.\n]+)//m)))
 			{
 			$SRec->{'PeerAddr'} = $SRec->{'Input'}->[0]->{'PeerAddr'};
@@ -167,24 +165,22 @@ sub Gets
 
 sub Read
 	{
-	my ($SRec, $MaxLen) = @_;
+	my ($SRec, $BufLen) = @_;
 
 	&{$SockAvail}($SRec)
 		or return;
 
-	$MaxLen or $MaxLen = $SRec->{'BuffSize'};
+	($BufLen && $BufLen > 0 && $BufLen < 32767 && $BufLen < $SRec->{'BuffSize'})
+		or $BufLen = ($SRec->{'BuffSize'} < 32767) ? $SRec->{'BuffSize'} : 32766;
 
-	(($MaxLen > 0) && ($MaxLen < 32767))
-		or $MaxLen =  32766;
-
-	$MaxLen--;
+	$BufLen--;
 
 	my @Result = ('', '', '');
 
 	if ($SRec->{'Input'}->[0])
 		{
-		if (($SRec->{'Input'}->[0]->{'Data'} =~ s/\A(.{0,$MaxLen}\n)//m) ||
-		    ($SRec->{'Input'}->[0]->{'Data'} =~ s/\A(.{0,$MaxLen}.)//m ))
+		if (($SRec->{'Input'}->[0]->{'Data'} =~ s/\A(.{0,$BufLen}\n)//m) ||
+		    ($SRec->{'Input'}->[0]->{'Data'} =~ s/\A(.{0,$BufLen}.)//m ))
 			{
 			$SRec->{'PeerAddr'} = $SRec->{'Input'}->[0]->{'PeerAddr'};
 			$SRec->{'PeerPort'} = $SRec->{'Input'}->[0]->{'PeerPort'};
@@ -203,12 +199,13 @@ sub Read
 
 sub Recv
 	{
-	my ($SRec, $MaxLen) = @_;
+	my ($SRec, $BufLen) = @_;
 
 	&{$SockAvail}($SRec)
 		or return;
 
-	$MaxLen or $MaxLen = $SRec->{'BuffSize'};
+	($BufLen && $BufLen > 0 && $BufLen < $SRec->{'BuffSize'})
+		or $BufLen = $SRec->{'BuffSize'};
 	
 	my @Result = ('', '', '');
 
@@ -216,9 +213,9 @@ sub Recv
 		{
 		$SRec->{'PeerAddr'} = $SRec->{'Input'}->[0]->{'PeerAddr'};
 		$SRec->{'PeerPort'} = $SRec->{'Input'}->[0]->{'PeerPort'};
-		@Result = (substr($SRec->{'Input'}->[0]->{'Data'}, 0, $MaxLen),
+		@Result = (substr($SRec->{'Input'}->[0]->{'Data'}, 0, $BufLen),
 		           $SRec->{'PeerAddr'}, $SRec->{'PeerPort'});
-		substr($SRec->{'Input'}->[0]->{'Data'}, 0, $MaxLen) = '';
+		substr($SRec->{'Input'}->[0]->{'Data'}, 0, $BufLen) = '';
 
 		if (!$SRec->{'TCP'} && 
 		    !length($SRec->{'Input'}->[0]->{'Data'}))
@@ -970,7 +967,7 @@ __END__
 Net::Socket::NonBlock - Perl extension for easy creation multi-socket single-thread application,
 especially non-forking TCP servers
 
-I<Version 0.14>
+I<Version 0.15>
 
 =head1 SYNOPSIS
 
@@ -1278,7 +1275,7 @@ I<C<$@>> will contain an error message.
 =item I<Important note>
 
 C<Listen> and C<Connect> are synchronous. So if connection establishing take a long time
-- for eaxmple because of slow DNS resolving - your program will be frozen for a long time.
+- for example because of slow DNS resolving - your program will be frozen for a long time.
 
 =back
 
@@ -1294,24 +1291,26 @@ I<Note: to create new C<Net::Socket::NonBlock> object you should use
 C<Net::Socket::NonBlock::Nest-E<gt>new()> or C<Net::Socket::NonBlock::Nest-E<gt>Connect()>
 methods>
 
-=item C<Gets([$MaxLength]);>
+=item C<Gets([$BufLength]);>
 
 For TCP sockets the C<Gets> method returns a string received from corresponding socket.
 "String" means I<C<(.*\n)>>.
 
 If data is available for reading but I<C<"\n">> is not presented
-in first I<C<$MaxLength>> bytes, the I<C<$MaxLength>> bytes will be returned.
+in first I<C<$BufLength>> bytes, the I<C<$BufLength>> bytes will be returned.
 
 For non-TCP sockets the C<Gets> works with blocks of data read
 from socket by single  C<IO::Socket::INET-E<gt>recv> call. It is necessary to provide correct
 C<PeerAddr> and C<PeerPort>. So, if I<C<"\n">> found in the block and length of string
-is no more than I<C<$MaxLength>>, the string will be returned.
-If no I<C<"\n">> found in the block and block length is no more than I<C<$MaxLength>>,
+is no more than I<C<$BufLength>>, the string will be returned.
+If no I<C<"\n">> found in the block and block length is no more than I<C<$BufLength>>,
 the whole block will be returned. If string is too long or block is too big,
-I<C<$MaxLength>> bytes will be returned.
+I<C<$BufLength>> bytes will be returned.
 
-Default I<C<$MaxLength>> is socket I<C<BiffSize>>.
-I<C<$MaxLength>> for C<Gets> have to be no more than C<32766>.
+Default I<C<$BufLength>> is socket I<C<BiffSize>>.
+
+Value of I<C<$BufLength>> should not be bigger than I<C<BiffSize>>
+or value C<32766> what is less.
 It will be adjusted automaticaly otherwise.
 
 If no data available for reading, C<Gets> returns empty string.
@@ -1330,17 +1329,17 @@ C<Net::Socket::NonBlock::Nest::IO()> method with data read from socket during la
 If you did not read all the data available in buffer new data will be appended
 to the end of buffer.
 
-=item C<Recv([$MaxLength]);>
+=item C<Recv([$BufLength]);>
 
 For TCP sockets the C<Recv> method returns all data available from corresponding socket
-if data length is no more than I<C<$MaxLength>>. Otherwise I<C<$MaxLength>> bytes returned.
+if data length is no more than I<C<$BufLength>>. Otherwise I<C<$BufLength>> bytes returned.
 
 For non-TCP sockets the C<Recv> works with blocks of data read
 from socket by single  C<IO::Socket::INET-E<gt>recv> call. It is necessary to provide correct
-C<PeerAddr> and C<PeerPort>. So, if block length is no more than I<C<$MaxLength>>,
-the whole block will be returned. If block is too big, I<C<$MaxLength>> bytes will be returned.
+C<PeerAddr> and C<PeerPort>. So, if block length is no more than I<C<$BufLength>>,
+the whole block will be returned. If block is too big, I<C<$BufLength>> bytes will be returned.
 
-Default I<C<$MaxLength>> is socket I<C<BiffSize>>.
+Default I<C<$BufLength>> is socket I<C<BiffSize>>.
 
 If no data available for reading, C<Recv> returns empty string.
 
@@ -1355,14 +1354,17 @@ In list context method returns an array of 3 elements:
 Note: C<Recv> is not reading data from the socket but takes it from special buffer filled by
 C<Net::Socket::NonBlock::Nest::IO()> method.
 
-=item C<Read([$MaxLength]);>
+=item C<Read([$BufLength]);>
 
 This method is little bit eclectic but I found it useful.
 
 If string I<C<"\n">> is presented in the buffer this method will act as C<Gets> method.
 Otherwise it will act as C<Recv>.
 
-I<C<$MaxLength>> for C<Read> have to be no more than C<32766>.
+Default I<C<$BufLength>> is socket I<C<BiffSize>>.
+
+Value of I<C<$BufLength>> should not be bigger than I<C<BiffSize>>
+or value C<32766> what is less.
 It will be adjusted automaticaly otherwise.
 
 If socket is closed C<Recv> returns an I<C<undef>> value.
@@ -1385,6 +1387,10 @@ Otherwise it returns 1.
 
 Note: C<Puts> is not writing data directly to the socket but puts it to the special buffer
 which will be flushed to socket by C<Net::Socket::NonBlock::Nest::IO()> method during next call.
+
+I<Size of output buffer is not monitored automaticaly. 
+It is definitely good idea to do it yourself to prevent memory overuse.
+See C<Properties()> (C<Output>) for details>
 
 =item C<Send();>
 

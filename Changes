@@ -1,5 +1,11 @@
 Revision history for Perl extension Net::Socket::NonBlock.
 
+0.15  Tue Apr 01 04:00:00 2003
+	- Minor bugfix with Gets()
+	  If socket buffer is full it's content have to be returned
+	  by Gets() even no '\n' symbol in the buffer.
+	- Minor documentation change
+
 0.14  Mon Feb 17 19:00:00 2003
         - Major bug fixed in Gets()
           The last piece of data is never returned unless it is terminated by '\n'
